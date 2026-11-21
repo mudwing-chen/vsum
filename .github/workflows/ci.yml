@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install package (no ML deps)
+        run: pip install -e . --no-deps
+      - name: Unit tests (no model download)
+        run: |
+          python tests/test_terms.py
+          python tests/test_exports.py
+          python tests/test_eval.py
+          python tests/test_cli.py
+          python tests/test_loop.py
+          python tests/test_transcribe.py
+          python tests/test_fetch.py
+          python tests/test_hardware.py
+          python tests/test_holdout.py
+          python tests/test_browser.py
+          python tests/test_summary.py
+          python tests/test_p2.py
+          python tests/test_batch.py
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (no ML deps)
+        run: pip install -e . --no-deps
+      - name: Unit tests (no model download, no browser)
+        run: |
+          python tests/test_terms.py
+          python tests/test_exports.py
+          python tests/test_eval.py
+          python tests/test_cli.py
+          python tests/test_loop.py
+          python tests/test_transcribe.py
+          python tests/test_fetch.py
+          python tests/test_hardware.py
+          python tests/test_holdout.py
+          python tests/test_browser.py
+          python tests/test_summary.py
+          python tests/test_p2.py
+          python tests/test_batch.py

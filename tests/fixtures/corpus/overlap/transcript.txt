@@ -1,0 +1,2 @@
+[  0.0 ->  2.0] cloud code 和 cloud 都出现在同一行，cloudy 不该命中
+[  2.0 ->  4.0] 这里写代码用 open cloud

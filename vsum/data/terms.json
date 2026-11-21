@@ -1,0 +1,152 @@
+{
+ "schema": 1,
+ "note": "术语表。canonical 是正确写法；variants[].surface 一律小写（匹配时大小写不敏感）。confidence=high 会被 vsum fix --apply 自动写盘，medium 只报不改，必须人工过目或显式 --apply-medium。confidence 是人工标签，不是概率：它只回答「这个写法要不要免检」，回答不了「这里到底是不是这个词」。与 canonical 只差大小写的写法（claude.md）可以写，修好后命中片段等于 canonical 会被跳过，幂等不受影响。unless 排除条件尚未接入，见 PROJECT.md 路线图。",
+ "terms": [
+  {
+   "canonical": "Claude",
+   "variants": [
+    {"surface": "claud", "confidence": "high"},
+    {"surface": "clode", "confidence": "high"},
+    {"surface": "cloude", "confidence": "high"},
+    {"surface": "cloud", "confidence": "medium",
+     "note": "裸 cloud 多半是 Claude 被念糊；cloud computing 场景同样高频，机器分不出来，只能人看"}
+   ],
+   "note": "Anthropic 的模型名"
+  },
+  {
+   "canonical": "Claude Code",
+   "variants": [
+    {"surface": "cloud code", "confidence": "high"},
+    {"surface": "cloudcode", "confidence": "high"},
+    {"surface": "claudecode", "confidence": "medium",
+     "note": "也可能是 CLAUDE.md 或 claude code 连写；既然要求人工确认就不能同时给免确认权限"}
+   ],
+   "note": "Anthropic 的 CLI 编程工具；70% 的实测错误都出在这一项"
+  },
+  {
+   "canonical": "CLAUDE.md",
+   "variants": [
+    {"surface": "cloudmd", "confidence": "high"},
+    {"surface": "claude md", "confidence": "high"},
+    {"surface": "cloud md", "confidence": "high"},
+    {"surface": "cloud.md", "confidence": "medium", "note": "也确实是「某个叫 cloud.md 的文件」，只能人看"},
+    {"surface": "claude.md", "confidence": "medium", "note": "只差大小写；medium 是因为也可能在引用文件名"}
+   ],
+   "note": "项目规范文件名；转写常写成 CloudMD"
+  },
+  {
+   "canonical": "Cursor",
+   "variants": [
+    {"surface": "curser", "confidence": "high"},
+    {"surface": "curse r", "confidence": "high"},
+    {"surface": "curser ai", "confidence": "high"}
+   ],
+   "note": "AI 编辑器"
+  },
+  {
+   "canonical": "Codex",
+   "variants": [
+    {"surface": "code x", "confidence": "medium"},
+    {"surface": "codedex", "confidence": "medium"}
+   ],
+   "note": "OpenAI 的编码模型"
+  },
+  {
+   "canonical": "Gemini",
+   "variants": [
+    {"surface": "gmini", "confidence": "high"},
+    {"surface": "geminy", "confidence": "high"},
+    {"surface": "jamini", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "DeepSeek",
+   "variants": [
+    {"surface": "deep sick", "confidence": "high"},
+    {"surface": "deepsick", "confidence": "high"},
+    {"surface": "deepseak", "confidence": "high"},
+    {"surface": "deepseq", "confidence": "high"},
+    {"surface": "deepsec", "confidence": "high"}
+   ],
+   "note": "deepseq / deepsec 来自标注集的已知漏报"
+  },
+  {
+   "canonical": "OpenClaw",
+   "variants": [
+    {"surface": "open claw", "confidence": "high"},
+    {"surface": "openclaude", "confidence": "high"},
+    {"surface": "open cloud", "confidence": "medium"}
+   ]
+  },
+  {
+   "canonical": "Ollama",
+   "variants": [
+    {"surface": "olama", "confidence": "high"},
+    {"surface": "o lama", "confidence": "high"},
+    {"surface": "ollamma", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "ChatGPT",
+   "variants": [
+    {"surface": "chat gpt", "confidence": "high"},
+    {"surface": "chat-gpt", "confidence": "high"},
+    {"surface": "chatgbt", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "GPT-4",
+   "variants": [
+    {"surface": "gpt4", "confidence": "medium"},
+    {"surface": "gpt 4", "confidence": "medium"}
+   ]
+  },
+  {
+   "canonical": "ComfyUI",
+   "variants": [
+    {"surface": "comfy ui", "confidence": "high"},
+    {"surface": "comfi ui", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "Midjourney",
+   "variants": [
+    {"surface": "mid journey", "confidence": "high"},
+    {"surface": "midjourny", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "Obsidian",
+   "variants": [
+    {"surface": "obsidion", "confidence": "medium"}
+   ]
+  },
+  {
+   "canonical": "Figma",
+   "variants": [
+    {"surface": "figmer", "confidence": "high"}
+   ]
+  },
+  {
+   "canonical": "Grok",
+   "variants": [
+    {"surface": "grock", "confidence": "high"}
+   ],
+   "note": "来自标注集已知漏报"
+  },
+  {
+   "canonical": "Sonnet",
+   "variants": [
+    {"surface": "sunite", "confidence": "high"}
+   ],
+   "note": "Claude 的 Sonnet 档；sunite 编辑距离 3，旧词表挖不到"
+  },
+  {
+   "canonical": "克劳德",
+   "variants": [
+    {"surface": "克劳得", "confidence": "medium"},
+    {"surface": "克劳特", "confidence": "medium", "note": "同音；中文音译只能人看，miner 的拉丁 token 通道扫不到"}
+   ]
+  }
+ ]
+}

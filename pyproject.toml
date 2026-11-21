@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vsum"
+version = "0.3.0"
+description = "视频/音频 → 可逐秒引用的逐字稿与带出处的摘要"
+readme = "README.md"
+license = {text = "MIT"}
+keywords = ["transcription", "subtitle", "whisper", "ffmpeg", "summary", "srt"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+requires-python = ">=3.9"
+# av 必须 <14：faster-whisper 1.2.1 仍调用 av.open(..., metadata_errors=...)，
+# 该参数在 av 14+ 被删，默认装最新的 av 19 会在第一次转写就 TypeError。
+dependencies = ["faster-whisper>=1.0", "av>=11,<14"]
+
+[project.optional-dependencies]
+# 抓链接：selenium 驱动 Safari(macOS) / Chrome(其他平台)
+browser = ["selenium>=4.10"]
+# B站 / YouTube 抓取
+yt = ["yt-dlp>=2024.1"]
+dev = []
+
+[project.scripts]
+vsum = "vsum.cli:main"
+
+[tool.setuptools]
+packages = ["vsum"]
+
+[tool.setuptools.package-data]
+vsum = ["data/*.json"]

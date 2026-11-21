@@ -1,0 +1,1 @@
+今天我们聊聊 cloud code 这个工具它叫 Grok，还有 DeepSeek 和 Sonnet这一段故意写得长一些，用来验证超过七秒的 cue 会被记进 manifest 的警告里。嗯，最后一句。

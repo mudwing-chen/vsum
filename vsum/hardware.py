@@ -1,0 +1,97 @@
+# -*- coding: utf-8 -*-
+"""硬件探测与 compute_type 选择。
+
+规则是**启发式**，不是实测数据：Pascal（cc 6.x）消费级卡 fp16 吞吐只有 1/64，
+所以走 int8_float32；cc>=7 且显存够才用 float16。真实速度以 `vsum bench` 为准。
+环境变量 WHISPER_DEVICE / WHISPER_COMPUTE 仍然优先，且不再被覆盖。
+"""
+import os
+import shutil
+import subprocess
+
+# 显存(GB) 下限 -> 建议模型上限；仅用于 doctor 提示，不强制
+MODEL_CAP = ((4, "small"), (8, "medium"), (1 << 30, "large-v3"))
+
+
+def parse_smi(text):
+    """解析 nvidia-smi --query-gpu=name,memory.total,compute_cap --format=csv,noheader。"""
+    out = []
+    for line in (text or "").splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 3:
+            continue
+        name, mem, cc = parts
+        try:
+            mib = float(mem.split()[0])
+            cap = float(cc)
+        except (ValueError, IndexError):
+            continue
+        out.append({"name": name, "vram_gb": round(mib / 1024.0, 1), "cc": cap})
+    return out
+
+
+def model_cap(vram_gb):
+    for limit, name in MODEL_CAP:
+        if vram_gb < limit:
+            return name
+    return "large-v3"
+
+
+def choose(gpus):
+    """只按最显存大的那张卡选；返回 device/compute_type/model_cap/reason。"""
+    if not gpus:
+        return {"device": "cpu", "compute_type": "int8", "model_cap": "medium",
+                "name": None, "cc": None, "vram_gb": None,
+                "reason": "没有 NVIDIA GPU：CPU int8，模型上限 medium"}
+    gpu = max(gpus, key=lambda g: g["vram_gb"])
+    cap = model_cap(gpu["vram_gb"])
+    if gpu["cc"] < 7:
+        compute = "int8_float32"
+        cap = "medium"  # Pascal 上 large 基本划不来
+        why = "cc %.1f < 7：Pascal 级 fp16 很慢，用 int8_float32" % gpu["cc"]
+    elif gpu["vram_gb"] >= 8:
+        compute = "float16"
+        why = "cc %.1f + %.1f GB：float16" % (gpu["cc"], gpu["vram_gb"])
+    else:
+        compute = "int8_float16"
+        why = "cc %.1f 但显存 %.1f GB < 8：int8_float16" % (gpu["cc"], gpu["vram_gb"])
+    return {"device": "cuda", "compute_type": compute, "model_cap": cap,
+            "name": gpu["name"], "cc": gpu["cc"], "vram_gb": gpu["vram_gb"],
+            "reason": why}
+
+
+def probe():
+    """有 nvidia-smi 才探测；失败返回 []，不抛。"""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return []
+    try:
+        out = subprocess.run([exe, "--query-gpu=name,memory.total,compute_cap",
+                              "--format=csv,noheader"], capture_output=True,
+                             text=True, timeout=10)
+        return parse_smi(out.stdout)
+    except Exception:
+        return []
+
+
+def resolve(gpus=None, cuda_count=None):
+    """优先级：WHISPER_DEVICE / WHISPER_COMPUTE > 自动探测 > CPU 兜底。"""
+    env_device = os.environ.get("WHISPER_DEVICE", "").strip()
+    env_compute = os.environ.get("WHISPER_COMPUTE", "").strip()
+    if gpus is None:
+        gpus = probe()
+    if cuda_count is None:
+        try:
+            import ctranslate2
+
+            cuda_count = ctranslate2.get_cuda_device_count()
+        except Exception:
+            cuda_count = 0
+    auto = choose(gpus) if cuda_count else choose([])
+    cfg = dict(auto)
+    cfg["source"] = "auto"
+    if env_device or env_compute:
+        cfg["device"] = env_device or auto["device"]
+        cfg["compute_type"] = env_compute or auto["compute_type"]
+        cfg["source"] = "env"
+    return cfg

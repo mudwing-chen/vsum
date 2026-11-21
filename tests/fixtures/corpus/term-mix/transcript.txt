@@ -1,0 +1,5 @@
+[  0.0 ->  3.2] 今天我们聊聊 cloud code 这个工具
+[  3.2 ->  6.4] 它叫 Grock，还有 Deepseq 和 sunite
+[  6.4 ->  9.6] 这个 cloudy 天气不错
+[  9.6 -> 12.8] 用 CloudMD 记录项目规范
+[ 12.8 -> 16.0] 这门课讲克劳得和 open cloud
