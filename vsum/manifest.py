@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 
+from . import __version__
+
 SCHEMA = 1
 
 
@@ -20,7 +22,7 @@ def sha256_file(path, chunk=1 << 20):
 
 
 def build(input_path, audio_path, decode, segments, outputs, warnings,
-          terms_path=None, mode="verbatim", duration=None, version="0.1.0", source_url=None,
+          terms_path=None, mode="verbatim", duration=None, version=None, source_url=None,
           summary=None):
     terms = {"pack": None, "path": None, "sha256": None}
     if terms_path:
@@ -28,7 +30,7 @@ def build(input_path, audio_path, decode, segments, outputs, warnings,
                  "sha256": sha256_file(terms_path)}
     return {
         "schema": SCHEMA,
-        "vsum_version": version,
+        "vsum_version": version or __version__,
         "mode": mode,
         "input": {"path": input_path, "sha256": sha256_file(input_path),
                   "duration": duration, "url": source_url},
