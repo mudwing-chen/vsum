@@ -2,12 +2,20 @@
 
 把一段视频变成**每一句都能定位到秒**的逐字稿。本地跑，不上传，产物可核对、可搜索、可剪。
 
+[English](README.en.md) · 中文
+
 ```bash
-pip install vsum          # 需要 Python 3.9+ 和 ffmpeg
+# 需要 Python 3.9+ 和 ffmpeg（PyPI 上的 `vsum` 是同名的另一个项目，别装错）
+uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"
+# 或者：pipx install "git+https://github.com/mudwing-chen/vsum"
+
 vsum talk.mp4 -o out/     # 转写 + 导出 + 抽取式摘要
 vsum find out/ "价格"      # 这句话在第几秒
 vsum clip out/ 03:41 -o clip.mp4
 ```
+
+> ⚠️ **`pip install vsum` 装的不是这个项目。** PyPI 上 `vsum` 已被另一个同名的视频总结工具占用；
+> 本仓库还没上 PyPI（计划改名 `vsum-cli` 后发布）。在那之前请用上面的 git 安装。
 
 ---
 
@@ -61,8 +69,12 @@ vsum clip out/ 03:41 -o clip.mp4
 
 ```bash
 # 需要 ffmpeg 在 PATH 上
-pip install vsum
-vsum doctor          # 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器
+uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"
+# 或 pipx / pip：
+#   pipx install "git+https://github.com/mudwing-chen/vsum"
+#   pip install "vsum @ git+https://github.com/mudwing-chen/vsum"
+
+vsum doctor          # 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR
 ```
 
 首次运行会下载模型（默认 `small`，约 480 MB）。国内网络下 HuggingFace 常常连不上：
