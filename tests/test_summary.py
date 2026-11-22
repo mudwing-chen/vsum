@@ -52,6 +52,13 @@ check("回查删编造的", bad_text not in new_md)
 check("回查计数", dropped == 2 and len(bad) == 2, (dropped, bad))
 check("回查幂等", summary.verify(new_md, SEGS)[0] == new_md)
 
+# 相邻段只差 1s 时，按时间取第一个会判错出处（真实 13:47 语料上误删 9 条）
+DENSE = [{"start": 741.54, "text": "不烤烟的人"},
+         {"start": 742.58, "text": "不知道4.3是多高的分数"}]
+dense_md, dense_dropped, _ = summary.verify("- 不知道4.3是多高的分数 [12:22]\n", DENSE)
+check("同段窗口按文本取出处", dense_dropped == 0, dense_md)
+check("没有文本线索时取最近的", summary.find_segment(742.5, DENSE)["start"] == 742.58)
+
 # build：确定性 + 六节齐全
 md1, mode1, bullets1, dropped1, warn1 = summary.build(SEGS, META, rules=RULES)
 md2 = summary.build(SEGS, META, rules=RULES)[0]

@@ -131,11 +131,22 @@ def extract(segments, meta, rules):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def find_segment(sec, segments, tol=1.0):
-    for s in segments:
-        if abs(float(s["start"]) - sec) <= tol:
-            return s
-    return None
+def find_segment(sec, segments, tol=1.0, text=None):
+    """在 ±tol 秒内找段。给 text 时优先挑「文本装得下它」的那段。
+
+    真实语料里相邻段常只差 0.5–1s，只按时间取第一个会把出处判错——
+    实测 13:47 的视频因此误删 9 条摘要（[12:22] 匹配到 741.5s 而非 742.6s）。
+    """
+    near = [s for s in segments if abs(float(s["start"]) - sec) <= tol]
+    if not near:
+        return None
+    if text:
+        key = norm(text)
+        hits = [s for s in near if key in norm(s.get("text") or "")]
+        if hits:
+            near = hits
+    near.sort(key=lambda s: abs(float(s["start"]) - sec))
+    return near[0]
 
 
 def verify(md, segments):
@@ -148,7 +159,7 @@ def verify(md, segments):
             continue
         text, mm, ss = m.group(1), m.group(2), m.group(3)
         want = int(mm) * 60 + int(ss)
-        seg = find_segment(want, segments)
+        seg = find_segment(want, segments, text=text)
         if seg is None or norm(text) not in norm(seg.get("text") or ""):
             bad.append(line)
             continue
