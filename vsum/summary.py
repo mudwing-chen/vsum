@@ -158,10 +158,23 @@ def extract(segments, meta, rules):
 
 
 def find_segment(sec, segments, tol=1.0):
+    """按 [mm:ss] 定位段：先找「秒数取整后完全相等」的段，再退到最近的。
+
+    早先只看「起点差 ≤1s」。分段长 1.3 秒时，前一段的起点也落在 1 秒内，
+    于是取错段、文本对不上，**真引用被当成编造删掉**——14 分钟那条视频里
+    概览 3 条被删了 2 条，删的全是真的。
+    `[mm:ss]` 是 floor(start) 来的，所以反查应当比较取整后的值，而不是浮点距离。
+    """
+    want = int(max(0.0, float(sec)))
     for s in segments:
-        if abs(float(s["start"]) - sec) <= tol:
+        if int(max(0.0, float(s["start"]))) == want:
             return s
-    return None
+    best, best_d = None, None
+    for s in segments:
+        d = abs(float(s["start"]) - float(sec))
+        if d <= tol and (best_d is None or d < best_d):
+            best, best_d = s, d
+    return best
 
 
 def verify(md, segments):

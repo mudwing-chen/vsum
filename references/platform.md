@@ -35,6 +35,30 @@ vsum login douyin --profile /tmp/p --timeout 120
 `login` 每 3 秒查一次 `sessionid` / `sessionid_ss`，默认等 300 秒；成功就打印 profile 路径并关闭浏览器（cookie 落盘）。
 `VSUM_BROWSER_PROFILE` 可以指定默认 profile，`--profile` 覆盖它。
 
+### Windows 真机实测（2026-11-22，Edge 158 + selenium 4.53）
+
+一条 `v.sum` 短链从零到 `video.mp4` 走通，但中间踩了四道坎，都和环境有关，不是代码逻辑：
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| `Cache folder (C:\Users\...\.cache\selenium) cannot be created: 拒绝访问` | 该目录当前账户建不了 | `set SE_CACHE_PATH=<可写目录>` |
+| `Unable to obtain driver for MicrosoftEdge` | selenium-manager 的下载/解压被挡 | 手动下 `https://msedgedriver.microsoft.com/<Edge版本>/edgedriver_win64.zip`，解压出的 `msedgedriver.exe` 放进 `%SE_CACHE_PATH%\msedgedriver\win64\<版本>\` 或加进 PATH |
+| `cannot create default profile directory` | `%LOCALAPPDATA%` 不可写 | `--profile <可写目录>` |
+| `cannot create temp dir for unpacking extensions` | `%TEMP%` 不可写 | 把 `TEMP`/`TMP` 指向可写目录 |
+| `tab crashed` | 渲染进程在受限账户/无 GPU 环境里挂掉 | `--headless` 加 `VSUM_BROWSER_ARGS="--no-sandbox,--disable-gpu,--disable-software-rasterizer"` |
+
+`VSUM_BROWSER_ARGS` 用逗号或空格分隔，追加到浏览器启动参数；这类环境问题不该由 vsum 猜。
+
+实测通过的命令（这一串能跑就说明链路是好的）：
+
+```powershell
+set SE_CACHE_PATH=D:\tmp\se
+set TEMP=D:\tmp\temp & set TMP=D:\tmp\temp
+set VSUM_BROWSER_ARGS=--no-sandbox,--disable-gpu
+vsum fetch "https://v.douyin.com/xxxx/" -o out/x --browser edge --profile D:\tmp\edge-profile --headless
+```
+
+
 ## 2. 抖音：走页面接口，不走 yt-dlp
 
 yt-dlp 对抖音已经失效（403 / `Fresh cookies needed`），别在它上面花时间。`vsum` 的路径是：

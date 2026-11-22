@@ -99,6 +99,14 @@ check("三位分钟的编造内容仍被删", dropped_fake == 1 and bad_fake == 
 check("mmss 超过 99 分钟不丢分钟位", summary._mmss(6000) == "100:00", summary._mmss(6000))
 check("BULLET 认三位分钟", bool(summary.BULLET.match("- x [100:00]")))
 
+# 细分段：前一段起点也落在 1 秒内时，不能取错段把真引用删掉
+close_segs = [{"start": 208.44, "end": 209.76, "text": "叫阿拉塞利的女孩", "avg_logprob": -0.1},
+              {"start": 209.76, "end": 211.0, "text": "你和她在1940年结婚", "avg_logprob": -0.1}]
+kept2, dropped2, bad2 = summary.verify("- 你和她在1940年结婚 [03:29]", close_segs)
+check("相邻分段不误删真引用", dropped2 == 0 and "结婚" in kept2, (dropped2, bad2))
+_, dropped3, _ = summary.verify("- 编造的一句 [03:29]", close_segs)
+check("相邻分段仍删编造", dropped3 == 1)
+
 # LLM 分块：整份逐字稿不能塞一个 prompt
 many = [{"start": float(i * 3), "end": float(i * 3 + 3), "text": "第%d段，随便说点什么内容。" % i}
         for i in range(400)]

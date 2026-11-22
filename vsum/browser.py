@@ -12,6 +12,7 @@ Safari 的一次性准备（显式 --browser safari 才需要）：
 """
 import os
 import platform
+import re
 import shutil
 import time
 
@@ -107,6 +108,18 @@ def find_binary(kind, system=None, env=None):
     return None
 
 
+def _extra_args():
+    """VSUM_BROWSER_ARGS="--no-sandbox,--disable-gpu" 追加浏览器参数。
+
+    有些环境（容器、受限的 Windows 账户、远程桌面）里 Chrome/Edge 的渲染进程
+    会直接崩（tab crashed）。这类问题不该由 vsum 猜，留一个口子给用户自己加参数。
+    """
+    raw = os.environ.get("VSUM_BROWSER_ARGS", "").strip()
+    if not raw:
+        return []
+    return [a for a in re.split(r"[,\s]+", raw) if a]
+
+
 def _options(target, headless, profile):
     if target == "edge":
         from selenium.webdriver.edge.options import Options
@@ -122,6 +135,8 @@ def _options(target, headless, profile):
     if headless:
         opts.add_argument("--headless=new")
         opts.add_argument("--disable-gpu")
+    for arg in _extra_args():
+        opts.add_argument(arg)
     return opts
 
 

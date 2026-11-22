@@ -163,7 +163,7 @@ vsum mine out/                   # 挖词表外的变体候选（需人工确认
 |---|---|
 | macOS (arm64) | 转写、导出、摘要、fix 闭环实测通过 |
 | Linux | CI 跑全部测试 |
-| Windows | 转写 / 导出 / find / clip 在 P106 + Win11 实测通过；抖音抓取链路未验证 |
+| Windows | P106 + Win11 实测：转写 / 导出 / find / clip 通过；抖音短链 → detail 接口 → 下载 → 转写 全链路通过（Edge 158） |
 
 链接抓取：抖音走 Chrome / Edge 的页面接口（先 `vsum login douyin` 扫码一次），
 B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
@@ -189,6 +189,8 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 | `WHISPER_WORDS` | 设 1 时记录词级时间戳与概率 | 关 |
 | `HF_ENDPOINT` | HuggingFace 镜像 | 官方 |
 | `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile | `~/.cache/vsum/chrome` |
+| `VSUM_BROWSER_ARGS` | 追加浏览器启动参数，逗号分隔；受限环境里 `--no-sandbox,--disable-gpu` 能救 `tab crashed` | 空 |
+| `SE_CACHE_PATH` | selenium 驱动缓存目录（默认目录不可写时改这里） | `~/.cache/selenium` |
 
 ## 开发
 
