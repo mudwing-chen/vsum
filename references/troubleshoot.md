@@ -35,6 +35,12 @@
 | 链接抓取报浏览器错误 | `vsum doctor` 看 `browser` 行；装 Chrome/Edge，或 `--browser` 指定 |
 | 代理干扰下载 | 抓抖音走 urllib（不吃环境代理）；yt-dlp 加 `--proxy` 或 `--proxy ''` |
 
+## Windows
+
+- 控制台默认 cp936（英文系统是 cp1252），打印中文原本会抛 `UnicodeEncodeError`；0.3.0 起进程内改用 `backslashreplace` 兜底，不再崩，但编不出的字会显示成 `\uXXXX`。想正常看中文：用 Windows Terminal，或先 `chcp 65001`
+- 输出重定向/接管道时自动写 UTF-8，可直接喂给别的程序；终端里保持本地编码不动
+- `vsum doctor` 的 `browser` 行报 Chrome/Edge 路径；Windows 候选在三个安装根下（`ProgramFiles`、`ProgramFiles(x86)`、`LOCALAPPDATA`）
+
 ## macOS / Linux
 
 - Safari 需在「设置 → 高级 → 显示开发菜单」里允许远程自动化，否则 `--browser safari` 报权限错误
