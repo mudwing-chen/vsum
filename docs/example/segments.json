@@ -1,0 +1,1291 @@
+{
+ "segments": [
+  {
+   "start": 0.05,
+   "end": 2.85,
+   "text": "10个一个多月,GPD终于发新模型了。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 2.85,
+   "end": 5.45,
+   "text": "我们今天就来看看到底是行事啦。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 5.45,
+   "end": 8.85,
+   "text": "同一个提示时,让4个模型各做一个3D飞机场景。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 8.85,
+   "end": 11.25,
+   "text": "Cloud的Fibre 5.2花了209美元。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 11.25,
+   "end": 13.85,
+   "text": "GPD 602 Astra只花了不到10美元。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 13.85,
+   "end": 15.65,
+   "text": "新出的Sau 2美元。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 15.65,
+   "end": 18.05,
+   "text": "城市变机甲、冰山破冰船、",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 18.05,
+   "end": 20.45,
+   "text": "能3D打印的百中一整座小镇。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 20.45,
+   "end": 22.25,
+   "text": "这两天它几乎被测了个遍。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 22.25,
+   "end": 24.05,
+   "text": "榜单上它冲到了全球第二,",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 24.05,
+   "end": 26.25,
+   "text": "可也有人直接说它基本没法用。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 26.25,
+   "end": 27.25,
+   "text": "还有一个团队说,",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 27.25,
+   "end": 29.45,
+   "text": "事故的人里没有一个人爱上它。",
+   "avg_logprob": -0.2119,
+   "no_speech_prob": 0.2142,
+   "compression_ratio": 1.261,
+   "temperature": 0.0
+  },
+  {
+   "start": 29.65,
+   "end": 31.85,
+   "text": "我把这两天最有代表性的测评结果,",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 31.85,
+   "end": 32.85,
+   "text": "依次给你看完。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 33.85,
+   "end": 37.25,
+   "text": "本期视频全部用我的skill和主剑库自动剪输出。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 37.25,
+   "end": 39.65,
+   "text": "全部资料都整理到Fred的专属知识库了。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 39.65,
+   "end": 41.65,
+   "text": "有兴趣的可以评论区callFred。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 41.65,
+   "end": 43.25,
+   "text": "先说清楚这两个模型。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 43.25,
+   "end": 46.05,
+   "text": "Astra是旗舰,专门干复杂的专业活。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 46.05,
+   "end": 48.05,
+   "text": "Solo是日常款,主打便宜。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 48.05,
+   "end": 50.25,
+   "text": "两个都是105万token的上下文。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 50.25,
+   "end": 52.25,
+   "text": "Astra每百万token输入8美元,",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 52.25,
+   "end": 54.65,
+   "text": "输出40美元,比上一代便宜的20%,",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 54.65,
+   "end": 56.45,
+   "text": "Solo是2美元和10美元,",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 56.45,
+   "end": 57.85,
+   "text": "只有Astra的四分之一。",
+   "avg_logprob": -0.1637,
+   "no_speech_prob": 0.0034,
+   "compression_ratio": 1.312,
+   "temperature": 0.0
+  },
+  {
+   "start": 58.65,
+   "end": 60.65,
+   "text": "3D是这次公认最强的一块。",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 61.25,
+   "end": 63.65,
+   "text": "让Astra设计一个能3D打印的摆中。",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 63.65,
+   "end": 66.65,
+   "text": "它先化草图,再把每个零件建成CAD模型,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 66.65,
+   "end": 68.65,
+   "text": "用Python验证齿轮能不能咬合,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 68.65,
+   "end": 71.15,
+   "text": "最后在blender里让整个机型转起来,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 71.15,
+   "end": 72.65,
+   "text": "还附了一份装配说明。",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 72.65,
+   "end": 75.25,
+   "text": "从一个冰山场景,Astra用了40分钟,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 75.25,
+   "end": 77.85,
+   "text": "8美元,fable 5.2用了快两个小时,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 77.85,
+   "end": 79.65,
+   "text": "81美元,便宜了10倍,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 79.65,
+   "end": 81.65,
+   "text": "但画面质感还是fable更好。",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 81.65,
+   "end": 84.45,
+   "text": "让它做一做小镇,正面看细节特别多,",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 84.45,
+   "end": 86.05,
+   "text": "一转角度就漏线了。",
+   "avg_logprob": -0.145,
+   "no_speech_prob": 0.0025,
+   "compression_ratio": 1.189,
+   "temperature": 0.0
+  },
+  {
+   "start": 86.05,
+   "end": 88.85,
+   "text": "原来它是把2D图片贴在了3D模型上,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 88.85,
+   "end": 90.45,
+   "text": "聪明也有点屈抢。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 90.45,
+   "end": 91.85,
+   "text": "第三方的人工盲评,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 91.85,
+   "end": 94.85,
+   "text": "做交互3D,Astra排全球第一。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 94.85,
+   "end": 97.25,
+   "text": "但是一道网页,问题就出来了。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 97.25,
+   "end": 98.85,
+   "text": "一口气让它做好多个网站,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 98.85,
+   "end": 100.25,
+   "text": "长得几乎一模一样,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 100.25,
+   "end": 102.25,
+   "text": "全是一种偏绿的配色。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 102.25,
+   "end": 104.25,
+   "text": "以前AI做网页爱用紫色,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 104.25,
+   "end": 105.65,
+   "text": "现在换成了绿色。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 105.65,
+   "end": 106.45,
+   "text": "结带码这块,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 106.45,
+   "end": 109.05,
+   "text": "OpenAI自己的编程测试Frontier Code,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 109.05,
+   "end": 111.65,
+   "text": "Sore和Astra只差了0.4分,",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 111.65,
+   "end": 114.25,
+   "text": "但fable 5.2还是比它们高了快5分。",
+   "avg_logprob": -0.1359,
+   "no_speech_prob": 0.0011,
+   "compression_ratio": 1.168,
+   "temperature": 0.0
+  },
+  {
+   "start": 114.25,
+   "end": 116.65,
+   "text": "Artificial Analysis专门测编程Agent,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 116.65,
+   "end": 118.05,
+   "text": "Astra跟上一代持平,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 118.05,
+   "end": 119.45,
+   "text": "Sore反而掉了3分。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 119.45,
+   "end": 121.05,
+   "text": "实测两周的结果也一样,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 121.05,
+   "end": 122.25,
+   "text": "携带码基本没进步,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 122.25,
+   "end": 123.25,
+   "text": "做完整项目的时候,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 123.25,
+   "end": 124.85,
+   "text": "还会提前停下来。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 124.85,
+   "end": 126.65,
+   "text": "那它到底什么省钱?",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 126.65,
+   "end": 128.25,
+   "text": "大部分时候是省的。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 128.25,
+   "end": 129.05,
+   "text": "同一个任务,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 129.05,
+   "end": 130.45,
+   "text": "Sore用了9分钟,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 130.45,
+   "end": 131.45,
+   "text": "0.53美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 131.45,
+   "end": 133.05,
+   "text": "Astra用了38分钟,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 133.05,
+   "end": 134.05,
+   "text": "1.24美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 134.05,
+   "end": 136.05,
+   "text": "Opson 5.5用了20分钟,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 136.05,
+   "end": 137.45,
+   "text": "7.49美元。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 137.45,
+   "end": 138.85,
+   "text": "官方的Agent测试里,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 138.85,
+   "end": 140.65,
+   "text": "每个任务Astra不到3美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 140.65,
+   "end": 142.05,
+   "text": "Fable要60美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 142.05,
+   "end": 143.65,
+   "text": "但也不是每次都便宜,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.015,
+   "compression_ratio": 1.242,
+   "temperature": 0.0
+  },
+  {
+   "start": 143.65,
+   "end": 144.45,
+   "text": "有一组对比,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 144.45,
+   "end": 145.25,
+   "text": "同一个任务,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 145.25,
+   "end": 146.85,
+   "text": "Astra花了快50美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 146.85,
+   "end": 148.45,
+   "text": "Fable才34美元。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 148.45,
+   "end": 149.85,
+   "text": "还有一个SV机动画,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 149.85,
+   "end": 151.25,
+   "text": "不停的让它再改一版,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 151.25,
+   "end": 152.05,
+   "text": "再好一点,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 152.05,
+   "end": 153.85,
+   "text": "最后烧掉了171美元,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 153.85,
+   "end": 155.05,
+   "text": "不过做出来的效果,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 155.05,
+   "end": 156.45,
+   "text": "确实很疯狂。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 156.45,
+   "end": 157.05,
+   "text": "所以,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 157.05,
+   "end": 157.85,
+   "text": "海外的口碑,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 157.85,
+   "end": 158.85,
+   "text": "完全两期。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 158.85,
+   "end": 159.85,
+   "text": "有人发帖说,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 159.85,
+   "end": 161.05,
+   "text": "测下来体验很糟,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 161.05,
+   "end": 161.85,
+   "text": "基本没法用,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 161.85,
+   "end": 162.45,
+   "text": "不推荐。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 162.45,
+   "end": 163.25,
+   "text": "这条帖子,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 163.25,
+   "end": 164.65,
+   "text": "80多万人看过。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 164.65,
+   "end": 165.85,
+   "text": "马上就有人甩出的",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 165.85,
+   "end": 167.25,
+   "text": "一丝丘改好的游戏画面,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 167.25,
+   "end": 168.85,
+   "text": "NPC说话的手势和眼神,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 168.85,
+   "end": 170.05,
+   "text": "自然了很多。",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 170.05,
+   "end": 170.85,
+   "text": "还有人吐槽,",
+   "avg_logprob": -0.1188,
+   "no_speech_prob": 0.01,
+   "compression_ratio": 1.253,
+   "temperature": 0.0
+  },
+  {
+   "start": 174.45,
+   "end": 175.25,
+   "text": "动和榜单上,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 175.25,
+   "end": 177.05,
+   "text": "Artificial Analysis的智能指数,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 177.05,
+   "end": 178.25,
+   "text": "Astra拿了62分,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 178.25,
+   "end": 179.25,
+   "text": "排全球第二,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 179.25,
+   "end": 180.85,
+   "text": "指数给Fable 5.2,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 180.85,
+   "end": 181.65,
+   "text": "Gemini 4,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 181.65,
+   "end": 183.05,
+   "text": "Carbon和Opus 5.5,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 183.05,
+   "end": 184.85,
+   "text": "都排在它后面。",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 184.85,
+   "end": 185.45,
+   "text": "文内这边,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 185.45,
+   "end": 186.85,
+   "text": "现在也已经能用上了,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 186.85,
+   "end": 188.65,
+   "text": "评价同样很两极。",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 188.65,
+   "end": 190.65,
+   "text": "拿经典的提湖骑士型车来测,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 190.65,
+   "end": 191.85,
+   "text": "把GPTU Astra,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 191.85,
+   "end": 192.85,
+   "text": "6.2 Astra,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 192.85,
+   "end": 194.65,
+   "text": "6.2 Seoul 300放在一起。",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 194.65,
+   "end": 195.25,
+   "text": "你可以看到,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 195.25,
+   "end": 197.05,
+   "text": "6.2的画面明显更精致,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 197.05,
+   "end": 199.05,
+   "text": "但差距没有想象中那么大。",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 199.05,
+   "end": 201.25,
+   "text": "拿老ERP系统的代码提取测,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 201.25,
+   "end": 202.85,
+   "text": "Astra拿了97.3分,",
+   "avg_logprob": -0.1563,
+   "no_speech_prob": 0.2721,
+   "compression_ratio": 1.15,
+   "temperature": 0.0
+  },
+  {
+   "start": 202.85,
+   "end": 204.45,
+   "text": "Solo拿了96.8分,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 204.45,
+   "end": 205.65,
+   "text": "两个都是一次通过,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 205.65,
+   "end": 206.65,
+   "text": "但做出来的页面,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 206.65,
+   "end": 208.65,
+   "text": "审美上还是刻劳得更好。",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 208.65,
+   "end": 209.65,
+   "text": "也有人直接说,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 209.65,
+   "end": 210.25,
+   "text": "很失望,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 210.25,
+   "end": 212.05,
+   "text": "用起来体感很糟糕。",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 212.05,
+   "end": 213.65,
+   "text": "为这次GPTU 6.2,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 213.65,
+   "end": 215.45,
+   "text": "我觉得最明显的变化就一个字,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 215.45,
+   "end": 216.25,
+   "text": "神。",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 216.25,
+   "end": 217.25,
+   "text": "大部分任务,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 217.25,
+   "end": 219.65,
+   "text": "它花的钱和时间比对手少了一大街。",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 219.65,
+   "end": 221.85,
+   "text": "3D和专业工作也确实变强了,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 221.85,
+   "end": 223.45,
+   "text": "但是写代码没有进步,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 223.45,
+   "end": 224.85,
+   "text": "网页审美和稳定性,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 224.85,
+   "end": 226.85,
+   "text": "Fable 5.2还是压它一头。",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 226.85,
+   "end": 228.25,
+   "text": "所以如果你是日常用,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 228.25,
+   "end": 229.85,
+   "text": "或者要大批量跑任务,",
+   "avg_logprob": -0.1193,
+   "no_speech_prob": 0.0008,
+   "compression_ratio": 1.226,
+   "temperature": 0.0
+  },
+  {
+   "start": 229.85,
+   "end": 231.85,
+   "text": "Solo是现在非常划算的选择。",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 231.85,
+   "end": 232.85,
+   "text": "做3D原型,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 232.85,
+   "end": 233.85,
+   "text": "复杂的专业文档,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 233.85,
+   "end": 235.25,
+   "text": "可以直接上Astra,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 235.25,
+   "end": 236.65,
+   "text": "如果你主要拿它写代码,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 236.65,
+   "end": 237.25,
+   "text": "做网页,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 237.25,
+   "end": 238.85,
+   "text": "我建议先别急着换。",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 238.85,
+   "end": 239.25,
+   "text": "OK,",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  },
+  {
+   "start": 239.25,
+   "end": 240.45,
+   "text": "以上就是本期的内容。",
+   "avg_logprob": -0.1012,
+   "no_speech_prob": 0.0616,
+   "compression_ratio": 1.01,
+   "temperature": 0.0
+  }
+ ]
+}

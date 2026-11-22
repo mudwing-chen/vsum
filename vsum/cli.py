@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-from . import (__version__, audit, batch as batch_mod, bench as bench_mod, browser as browser_mod, doctor, evaluate, export as export_mod, fetch as fetch_mod, fix, holdout, mine_variants, pipeline, transcribe)
+from . import (__version__, audit, batch as batch_mod, bench as bench_mod, browser as browser_mod, doctor, evaluate, export as export_mod, fetch as fetch_mod, fix, holdout, lookup, mine_variants, pipeline, transcribe)
 
 
 def _export_cmd(argv):
@@ -47,11 +47,15 @@ def _main_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum", description="逐字稿工具：vsum <file> -o DIR")
     ap.add_argument("input", help="本地音视频文件，或抖音/B站/YouTube 链接")
     ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small",
+                    help="tiny|base|small|medium|large-v3，或本地模型目录（默认 small）")
     ap.add_argument("--lang", default="zh")
     ap.add_argument("--pack", default=None, help="术语包（JSON）")
     ap.add_argument("--clean", action="store_true")
     ap.add_argument("--words", action="store_true")
+    ap.add_argument("--no-context", action="store_true",
+                    help="不用上文（condition_on_previous_text=False）：更不易复读，"
+                         "但中文会漂成繁体、丢标点，不推荐")
     ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"],
                     help="抓链接时用哪个浏览器；默认 Chrome，没装就 Edge，Safari 需显式指定")
     ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控，默认可见窗口）")
@@ -70,7 +74,8 @@ def _main_cmd(argv):
                         browser=args.browser, fetch_only=args.fetch_only,
                         headless=True if args.headless else None, profile=args.profile,
                         summary_mode=args.summary, llm_url=args.llm_url,
-                        llm_model=args.llm_model, force=args.force)
+                        llm_model=args.llm_model, force=args.force,
+                        context=not args.no_context)
 
 
 def _fetch_cmd(argv):
@@ -108,9 +113,10 @@ def _batch_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum batch", description="一串链接串行跑，失败不中断")
     ap.add_argument("list", help="urls.txt（一行一条）或 index.json（{\"items\":[{\"href\"}]}）")
     ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small")
     ap.add_argument("--lang", default="zh")
     ap.add_argument("--pack", default=None)
+    ap.add_argument("--no-context", action="store_true")
     ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"])
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--profile", default=None)
@@ -123,7 +129,8 @@ def _batch_cmd(argv):
     call = lambda: batch_mod.run(args.list, args.out, args.model, args.lang, args.pack,
                                  browser=args.browser,
                                  headless=True if args.headless else None,
-                                 profile=args.profile, force=args.force)
+                                 profile=args.profile, force=args.force,
+                                 context=not args.no_context)
     if args.json:
         with contextlib.redirect_stdout(sys.stderr):
             code = call()
@@ -154,6 +161,8 @@ SUB = {
     "bench": _bench_cmd,
     "doctor": _doctor_cmd,
     "fetch": _fetch_cmd,
+    "find": lookup.find_main,
+    "clip": lookup.clip_main,
     "login": _login_cmd,
     "eval": evaluate.main,
     "holdout": holdout.main,

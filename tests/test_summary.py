@@ -52,14 +52,22 @@ check("回查删编造的", bad_text not in new_md)
 check("回查计数", dropped == 2 and len(bad) == 2, (dropped, bad))
 check("回查幂等", summary.verify(new_md, SEGS)[0] == new_md)
 
-# build：确定性 + 六节齐全
+# build：确定性 + 小节齐全
 md1, mode1, bullets1, dropped1, warn1 = summary.build(SEGS, META, rules=RULES)
 md2 = summary.build(SEGS, META, rules=RULES)[0]
 check("两次构建字节一致", md1 == md2)
 check("默认抽取式", mode1 == "extractive", mode1)
-check("六节齐全", all(h in md1 for h in ("## 概览", "## 分章", "## 关键数字", "## 关键词", "## 存疑段")), md1)
+check("必需小节齐全", all(h in md1 for h in ("## 概览", "## 关键数字", "## 关键词", "## 存疑段")), md1)
+check("不足两章不出分章", "## 分章" not in md1, md1)
+long_meta = {"title": "long", "duration_sec": 900.0, "low_conf": set()}
+long_segs = [{"start": float(i * 60), "end": float(i * 60 + 5),
+              "text": "第%d分钟里说了一件有数字 2026 的事情" % i, "avg_logprob": -0.2}
+             for i in range(15)]
+long_md = summary.build(long_segs, long_meta, rules=RULES)[0]
+check("跨章时出分章", "## 分章" in long_md and long_md.count("###") >= 2, long_md[:400])
 bullets = [l for l in md1.split("## 关键词")[0].splitlines() if l.startswith("- ") and not l.startswith("- （")]
 check("每条要点带时间", all(summary.BULLET.match(l) for l in bullets), md1)
+check("全局不重复", len(bullets) == len(set(bullets)), bullets)
 check("存疑段来自 low_conf", "[00:03]" in md1, md1)
 check("mode=none 返回空", summary.build(SEGS, META, "none", rules=RULES)[0] == "")
 
@@ -103,7 +111,7 @@ check("每块不超预算太多",
 check("空输入返回空块", summary.chunks([]) == [])
 check("单段超预算也单独成块",
       len(summary.chunks([{"start": 0.0, "text": "长" * (summary.CHUNK_CHARS * 2)}])) == 1)
-check("llm_bullets 无 url 返回三元组", summary.llm_bullets(many, None, "x") == (None, 0, 0))
+check("llm_bullets 无 url 返回三元组", summary.llm_bullets(many, None, "x") == (None, None, 0, 0))
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

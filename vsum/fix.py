@@ -40,16 +40,21 @@ def load_segments(dirpath):
 
 
 def annotate(records, segments):
-    """给记录补 segment / low_conf（全片 avg_logprob 最低 10% 分位），返回 low_conf 条数。"""
-    vals = sorted(s["avg_logprob"] for s in segments if s.get("avg_logprob") is not None)
-    cut = vals[max(0, int(len(vals) * 0.1) - 1)] if vals else None
+    """给记录补 segment / low_conf（全片 avg_logprob 最低 10%），返回 low_conf 条数。
+
+    低置信判定和 transcript.md 的 ⚠ 用同一个函数，避免两处口径漂移。
+    """
+    from . import export as export_mod
+
+    low_idx = export_mod.low_conf_indexes(segments)
     low = 0
     for r in records:
         seg = None
+        seg_no = None
         if r["sec"] is not None:
-            for s in segments:
+            for i, s in enumerate(segments, 1):
                 if s["start"] <= r["sec"] <= s["end"]:
-                    seg = s
+                    seg, seg_no = s, i
                     break
         if seg is None:
             r["segment"] = None
@@ -60,8 +65,7 @@ def annotate(records, segments):
             "no_speech_prob": seg.get("no_speech_prob"),
             "compression_ratio": seg.get("compression_ratio"),
         }
-        r["low_conf"] = bool(cut is not None and seg.get("avg_logprob") is not None
-                             and seg["avg_logprob"] <= cut)
+        r["low_conf"] = bool(seg_no in low_idx)
         low += 1 if r["low_conf"] else 0
     return low
 

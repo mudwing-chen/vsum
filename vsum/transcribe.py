@@ -1,14 +1,25 @@
 # -*- coding: utf-8 -*-
-"""faster-whisper 转写。模型是懒加载的：不跑转写就不会 import faster_whisper。"""
+"""faster-whisper 转写。模型是懒加载的：不跑转写就不会 import faster_whisper。
+
+音频不走 av 解码：vsum 自己已经用 ffmpeg 抽了 16k 单声道 wav，这里直接用标准库
+wave 读成 float32 数组喂给模型。这样 av 的版本变化（decode_audio 的 kvarg、
+重采样行为）就完全影响不到转写结果——faster-whisper 只是把它当传递依赖装着。
+"""
 import json
 import os
 import time
+import wave
+
+import numpy as np
 
 from . import hardware, termrules
 
 DEFAULT_PROMPT = "以下是普通话视频内容。"
 # 显式写死，进 manifest；温度回退会影响可复现性，但关掉它长音频更容易卡在复读上
 TEMPERATURE = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+SAMPLE_RATE = 16000
+
+_MODELS = {}
 
 
 class DependencyError(RuntimeError):
@@ -20,8 +31,30 @@ class TranscribeError(RuntimeError):
 
 
 def av_incompatible(exc):
-    """faster-whisper 1.2.1 + av>=14 的已知崩法：metadata_errors 参数被删。"""
+    """faster-whisper 旧版本 + av>=14 的已知崩法：metadata_errors 参数被删。
+
+    vsum 现在不把路径交给 faster-whisper（见 load_audio），所以这条只作为
+    用户手工调用 decode_audio 时的诊断提示保留。
+    """
     return isinstance(exc, TypeError) and "metadata_errors" in str(exc)
+
+
+def load_audio(path):
+    """16k 单声道 PCM wav -> float32 [-1,1] 数组；读不了返回 None（退回到传路径）。"""
+    try:
+        with wave.open(path, "rb") as w:
+            if w.getnchannels() != 1 or w.getsampwidth() != 2:
+                return None
+            raw = w.readframes(w.getnframes())
+            rate = w.getframerate()
+    except (wave.Error, OSError, EOFError):
+        return None
+    if not raw:
+        return None
+    audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    if rate != SAMPLE_RATE:
+        return None  # 非 16k 交给 faster-whisper 自己重采样，别在这里做半套
+    return audio
 
 
 def pick_device():
@@ -35,6 +68,7 @@ def pick_device():
         return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
     except Exception:
         return "cpu"
+
 
 
 def load_hotwords(terms_path=None):
@@ -77,8 +111,13 @@ def fallback_count(segments):
     return sum(1 for s in segments if s.get("temperature"))
 
 
-def decode_args(model_name, language, terms_path=None, words=None):
-    """返回 (构造参数, 记录进 manifest 的参数字典)。"""
+def decode_args(model_name, language, terms_path=None, words=None, context=True):
+    """返回 (构造参数, 记录进 manifest 的参数字典)。
+
+    context = condition_on_previous_text：中文实测差别很大。True 会沿用上文，
+    输出简体、带标点、句子完整；False 每段当全新的听，会漂成繁体、丢标点，
+    连摘要都没法按标点切句。默认 True，要老行为用 --no-context。
+    """
     if words is None:
         words = _words_enabled()
     hw = hardware.resolve()
@@ -87,7 +126,7 @@ def decode_args(model_name, language, terms_path=None, words=None):
     prompt = os.environ.get("WHISPER_PROMPT", DEFAULT_PROMPT)
     hot = load_hotwords(terms_path)
     kwargs = dict(language=language, vad_filter=True, beam_size=5,
-                  condition_on_previous_text=False,
+                  condition_on_previous_text=bool(context),
                   temperature=TEMPERATURE, initial_prompt=prompt)
     if hot:
         kwargs["hotwords"] = hot
@@ -96,33 +135,53 @@ def decode_args(model_name, language, terms_path=None, words=None):
     recorded = {
         "model": model_name, "device": device, "compute_type": compute,
         "language": language, "beam_size": 5, "vad_filter": True,
-        "condition_on_previous_text": False, "temperature": list(TEMPERATURE),
+        "condition_on_previous_text": bool(context), "temperature": list(TEMPERATURE),
         "initial_prompt": prompt, "hotwords": bool(hot), "word_timestamps": bool(words),
         "device_source": hw["source"], "gpu": hw["name"], "model_cap": hw["model_cap"],
+        "audio_input": "ndarray",
     }
     return kwargs, recorded, device, compute
 
 
-def transcribe_audio(audio_path, out_dir, model_name="medium", language="zh",
-                     terms_path=None, words=None, on_progress=None):
+def get_model(model_name, device, compute, cache=True):
+    """模型缓存：同一进程里反复用同一个模型时不要重复加载。
+
+    批量跑 N 条视频，每条重新 WhisperModel(...) 就要重付一次 CUDA 初始化
+    （本机实测 20~40 秒）。batch 走的就是同一条进程，所以这里必须缓存。
+    """
+    key = (model_name, device, compute)
+    if cache and key in _MODELS:
+        return _MODELS[key], True
+    from faster_whisper import WhisperModel
+
+    model = WhisperModel(model_name, device=device, compute_type=compute)
+    if cache:
+        _MODELS[key] = model
+    return model, False
+
+
+def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
+                     terms_path=None, words=None, on_progress=None, context=True):
     """跑一次转写，写 transcript.txt + segments.json，返回 (segments, info, decode 记录)。"""
+    kwargs, recorded, device, compute = decode_args(model_name, language, terms_path, words, context)
     try:
-        from faster_whisper import WhisperModel
+        model, cached = get_model(model_name, device, compute)
     except ImportError as exc:  # pragma: no cover - 依赖缺失路径
         raise DependencyError("faster-whisper 未安装：pip install faster-whisper（%s）" % exc)
-
-    kwargs, recorded, device, compute = decode_args(model_name, language, terms_path, words)
-    try:
-        model = WhisperModel(model_name, device=device, compute_type=compute)
     except Exception as exc:
         raise DependencyError("模型加载失败（%s / %s / %s）：%s" % (model_name, device, compute, exc))
+    if cached:
+        print("模型已在内存里（%s / %s），跳过加载" % (model_name, device))
     started = time.time()
+    audio = load_audio(audio_path)
+    payload = audio if audio is not None else audio_path
     try:
-        segs, info = model.transcribe(audio_path, **kwargs)
+        segs, info = model.transcribe(payload, **kwargs)
     except Exception as exc:
         if av_incompatible(exc):
-            raise DependencyError("av 版本过新：faster-whisper 1.2.1 与 av>=14 不兼容，"
-                                  "装 av<14（pip install 'av<14'）") from exc
+            raise DependencyError("av 版本过新：faster-whisper 的 decode_audio 与 av>=14 不兼容，"
+                                  "而 vsum 本不该走到解码这条路（传的是 wav 数组）。"
+                                  "请确认输入是 16k 单声道 wav，或 pip install 'av<14'") from exc
         raise TranscribeError("转写失败：%s" % exc) from exc
 
     lines, segments = [], []

@@ -85,34 +85,58 @@ def keywords(segments, rules, limit=8):
     return ranked[:limit]
 
 
+def _pick(pool, used, n):
+    """从池子里取还没用过的前 n 条，取到就记进 used（全局去重用）。
+
+    以前三个 section 各自取 top-N，同一条候选会被塞进「概览」「分章」「关键数字」
+    各一次——4 分钟视频 23 条里 5 条是重复。这条线是摘要"看起来很水"的主因。
+    """
+    out = []
+    for c in pool:
+        if len(out) >= n:
+            break
+        key = norm(c["text"])
+        if not key or key in used:
+            continue
+        used.add(key)
+        out.append(c)
+    return out
+
+
 def extract(segments, meta, rules):
     """确定性抽取式摘要。返回 markdown 文本（未经回查）。"""
     cands = candidates(segments, rules)
     title = meta.get("title") or "（未命名）"
     duration = meta.get("duration_sec")
     low = meta.get("low_conf") or set()
+    used = set()
 
     lines = ["# 摘要：%s" % title, ""]
     stamp = _mmss(duration) if duration else "--:--"
     lines.append("> 时长 %s · %d 段 · %d 字 · 生成方式：抽取式（不调用模型）"
                  % (stamp, len(segments), sum(len(s["text"]) for s in segments)))
+    lines.append("> 每条要点都回查过原文；摘要是草稿，结论以 transcript.md 为准。")
     lines.append("")
     lines.append("## 概览")
-    lines.extend(_bullets(cands[:3]) or ["- （没有可摘的句子）"])
+    lines.extend(_bullets(_pick(cands, used, 3)) or ["- （没有可摘的句子）"])
     lines.append("")
 
-    lines.append("## 分章")
     buckets = {}
     for c in cands:
         buckets.setdefault(_bucket(c["start"]), []).append(c)
-    for b in sorted(buckets):
-        top = buckets[b][:2]
-        lines.append("### %s–%s" % (_mmss(b * 300), _mmss((b + 1) * 300)))
-        lines.extend(_bullets(top))
-        lines.append("")
+    # 不足两章就不出这一节：4 分钟的视频只有一个 00:00–05:00，内容必然和概览重复。
+    if len(buckets) >= 2:
+        lines.append("## 分章")
+        for b in sorted(buckets):
+            top = _pick(buckets[b], used, 2)
+            if not top:
+                continue
+            lines.append("### %s–%s" % (_mmss(b * 300), _mmss((b + 1) * 300)))
+            lines.extend(_bullets(top))
+            lines.append("")
 
     lines.append("## 关键数字")
-    nums = [c for c in cands if any(ch.isdigit() for ch in c["text"])][:6]
+    nums = _pick([c for c in cands if any(ch.isdigit() for ch in c["text"])], used, 6)
     lines.extend(_bullets(nums) or ["- （没提到数字）"])
     lines.append("")
 
@@ -176,13 +200,45 @@ def chunks(segments, limit=CHUNK_CHARS):
     return out
 
 
+ASK_TEMPLATE = (
+    "下面是视频逐字稿，每行以 [mm:ss] 开头。只返回一个 JSON 对象，形如\n"
+    "{\"overview\": \"不超过 120 字的一句话综述\", "
+    "\"bullets\": [{\"text\": \"原句片段\", \"sec\": 12.3}]}\n"
+    "要求：\n"
+    "1. overview 用你自己的话概括全片论点，不要照抄原句，不要编造原句里没有的数字；\n"
+    "2. bullets 最多 %d 条，text 必须是上面某一行的原文片段（会被逐字回查，改了就会被删）；\n"
+    "3. sec 是该行时间戳的秒数。不要解释，不要 markdown 代码块。\n\n"
+)
+
+
+def _parse_reply(content):
+    """从模型回复里抠出 {"overview", "bullets"}；抠不出来返回 None。"""
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(content[start:end + 1])
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    bullets = []
+    for it in data.get("bullets") or []:
+        try:
+            bullets.append({"text": str(it["text"]).strip(), "sec": float(it["sec"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    overview = data.get("overview")
+    overview = str(overview).strip() if overview else None
+    if not bullets and not overview:
+        return None
+    return {"overview": overview, "bullets": bullets}
+
+
 def _llm_ask(chunk, base_url, model, timeout):
-    """对一块逐字稿问一次；返回 [{text,sec}]，失败返回 None。"""
+    """对一块逐字稿问一次；返回 {overview, bullets}，失败返回 None。"""
     lines = ["[%s] %s" % (_mmss(s["start"]), s["text"]) for s in chunk]
-    prompt = ("下面是视频逐字稿，每行以 [mm:ss] 开头。挑最多 %d 句最值得读的，"
-              "只返回 JSON 数组，元素形如 {\"text\": \"原句\", \"sec\": 12.3}；"
-              "text 必须是某一行的原文片段，sec 是该行时间戳的秒数。不要解释。\n\n"
-              % MAX_BULLETS + "\n".join(lines))
+    prompt = (ASK_TEMPLATE % MAX_BULLETS) + "\n".join(lines)
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
                        "temperature": 0}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
@@ -191,36 +247,30 @@ def _llm_ask(chunk, base_url, model, timeout):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
-        start, end = content.find("["), content.rfind("]")
-        items = json.loads(content[start:end + 1])
     except Exception:
         return None
-    out = []
-    for it in items if isinstance(items, list) else []:
-        try:
-            out.append({"text": str(it["text"]).strip(), "sec": float(it["sec"])})
-        except (KeyError, TypeError, ValueError):
-            continue
-    return out or None
+    return _parse_reply(content)
 
 
 def llm_bullets(segments, base_url, model, timeout=90):
-    """分块调 /chat/completions，返回 (bullets, 失败块数, 总块数)。
+    """分块调 /chat/completions，返回 (bullets, overview, 失败块数, 总块数)。
 
-    单块失败不影响其他块；全部失败返回 (None, n, n)，由 build 退回抽取式。
+    单块失败不影响其他块；全部失败返回 (None, None, n, n)，由 build 退回抽取式。
     """
     if not base_url:
-        return None, 0, 0
+        return None, None, 0, 0
     parts = chunks(segments)
-    got, failed = [], 0
+    got, overviews, failed = [], [], 0
     for chunk in parts:
-        items = _llm_ask(chunk, base_url, model, timeout)
-        if items:
-            got.extend(items)
+        reply = _llm_ask(chunk, base_url, model, timeout)
+        if reply:
+            got.extend(reply["bullets"])
+            if reply.get("overview"):
+                overviews.append(reply["overview"])
         else:
             failed += 1
-    if not got:
-        return None, failed, len(parts)
+    if not got and not overviews:
+        return None, None, failed, len(parts)
     seen, merged = set(), []
     for b in sorted(got, key=lambda x: x["sec"]):
         key = norm(b["text"])
@@ -228,10 +278,16 @@ def llm_bullets(segments, base_url, model, timeout=90):
             continue
         seen.add(key)
         merged.append(b)
-    return merged[:MAX_BULLETS] or None, failed, len(parts)
+    overview = " ".join(overviews) if overviews else None
+    return (merged[:MAX_BULLETS] or None), overview, failed, len(parts)
 
 
-def render_llm(bullets, segments, meta, model):
+def render_llm(bullets, overview, segments, meta, model):
+    """LLM 摘要：综述（允许改写、不带时间戳）+ 要点（必须过回查门）。
+
+    两级是刻意的：改写型结论一定不是原文子串，混在同一个格式里只会被回查门删光。
+    分开之后，能引用的部分保持可核对，能读的部分不被删。
+    """
     title = meta.get("title") or "（未命名）"
     duration = meta.get("duration_sec")
     lines = ["# 摘要：%s" % title, ""]
@@ -239,11 +295,28 @@ def render_llm(bullets, segments, meta, model):
     lines.append("> 时长 %s · %d 段 · %d 字 · 生成方式：LLM（%s）"
                  % (stamp, len(segments), sum(len(s["text"]) for s in segments), model or "unknown"))
     lines.append("")
-    lines.append("## 概览")
-    for b in bullets:
-        seg = find_segment(b["sec"], segments)
-        sec = seg["start"] if seg else b["sec"]
-        lines.append("- %s [%s]" % (b["text"], _mmss(sec)))
+    if overview:
+        lines.append("## 一句话")
+        lines.append(overview)
+        lines.append("")
+        lines.append("> 本段是模型改写，未经逐字校验；引用请以「要点」和 transcript.md 为准。")
+        lines.append("")
+    if bullets:
+        lines.append("## 要点（每条都能回查到原文）")
+        for b in bullets:
+            seg = find_segment(b["sec"], segments)
+            sec = seg["start"] if seg else b["sec"]
+            lines.append("- %s [%s]" % (b["text"], _mmss(sec)))
+        lines.append("")
+    low = meta.get("low_conf") or set()
+    dubious = [s for i, s in enumerate(segments, 1) if i in low]
+    if dubious:
+        dubious.sort(key=lambda s: s.get("avg_logprob") or 0)
+        lines.append("## 存疑段")
+        for s in dubious[:5]:
+            lines.append("- [%s] %s（avg_logprob %.2f）"
+                         % (_mmss(s["start"]), s["text"], s.get("avg_logprob") or 0))
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -256,9 +329,9 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
     warnings = []
     md = None
     if mode == "llm":
-        items, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown")
-        if items:
-            md = render_llm(items, segments, meta, llm_model)
+        items, overview, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown")
+        if items or overview:
+            md = render_llm(items or [], overview, segments, meta, llm_model)
             if failed:
                 warnings.append("LLM 摘要 %d/%d 块失败（上下文过长/没网），只用成功块"
                                 % (failed, total))

@@ -11,10 +11,10 @@ license: MIT
 ## 0. 先看环境
 
 ```bash
-vsum doctor        # python / ffmpeg / av / faster-whisper / 设备 / 浏览器，缺什么直接说
+vsum doctor        # python / ffmpeg / faster-whisper / 设备 / 浏览器，缺什么直接说
 ```
 
-装了但报 `TypeError: ... 'metadata_errors'` → `pip install 'av<14'`。完整故障表见 [references/troubleshoot.md](references/troubleshoot.md)。
+vsum 不锁 av 版本（它自己用 ffmpeg 抽 wav、按数组喂模型），装不上再看 [references/troubleshoot.md](references/troubleshoot.md)。
 
 ## 1. 主路径
 
@@ -29,7 +29,7 @@ vsum <文件或链接> -o out/
 
 产物在 `out/`：`transcript.md`、`summary.md`、`result.json`、`segments.json`、`transcript.srt/.vtt/.txt/.plain.txt`、`manifest.json`、`export.source.json`。
 
-常用参数：`--model tiny|small|medium|large-v3`（默认 medium）、`--lang zh`、`--summary extractive|llm|none`、
+常用参数：`--model tiny|base|small|medium|large-v3`（默认 small，或传本地模型目录）、`--lang zh`、`--summary extractive|llm|none`、
 `--clean`、`--force`、`--json`（stdout 只一行结果）、`--quiet`、`--browser auto|chrome|edge|safari`、`--headless`、`--profile`。
 
 转写慢：先用 `vsum bench --audio <样例>` 量本机 RTF，再决定模型；长音频放后台跑，别在前台等。
@@ -37,8 +37,15 @@ vsum <文件或链接> -o out/
 ## 2. 读稿顺序
 
 1. `summary.md` — 当草稿看。回查只保证每条有出处，不保证摘得对。
-2. `transcript.md` — 结论以它为准。每段一行，`[mm:ss]` 是引用锚点；带 `⚠` 的段是低置信（全片 `avg_logprob` 最低 10%）。
+2. `transcript.md` — 结论以它为准。每段一行，`[mm:ss]` 是引用锚点；带 `⚠` 的段是低置信（全片 `avg_logprob` 最低 10%，按排名取）。
 3. `result.json` — `counts`、`summary.dropped`（回查被删的条数）、`warnings`。
+
+要**定位原文**别翻文件，直接搜：
+
+```bash
+vsum find out/ "关键词" --context 1     # 命中项带 [mm:ss] 和上下文
+vsum clip out/ 03:41 -o clip.mp4        # 把那一秒前后剪出来听
+```
 
 `segments.json` 里有每段的 `temperature`：非 0 说明这段走了温度回退，文本比前一段更不可靠。
 
@@ -84,7 +91,7 @@ vsum fetch "<链接>" -o out/x          # 只下载视频，不转写
 |---|---|
 | `vsum doctor` 报 ffmpeg 缺失 | 装 ffmpeg 并放进 PATH；抽音频要用 |
 | 链接连续失败 / 风控 | 先 `vsum login douyin` 重登；还不行就请用户给本地文件 |
-| `av` 14+ 的 `TypeError` | `pip install 'av<14'` |
+| 模型下载失败（HF 连不上） | `set HF_ENDPOINT=https://hf-mirror.com`，或用 `--model <本地模型目录>` |
 | 显存不足 | 降 `--model` 或设 `WHISPER_COMPUTE=int8` |
 | 字幕条目少于段数 | 正常：空文本 / 负时间 / 零时长被修正，`invalid_cues` 有逐条记录 |
 
