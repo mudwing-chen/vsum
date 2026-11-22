@@ -47,8 +47,14 @@ vsum batch urls.txt -o out/batch     # urls.txt 一行一条；也收 index.json
 `--summary extractive|llm|none`、`--llm-url`、`--force`（不复用旧转写）、`--json`（stdout 只一行 result.json）、
 `--quiet`、`--browser auto|chrome|edge|safari`、`--headless`、`--profile`。
 
-默认模型是 `small`。本机实测（CPU int8、60 秒中文片段）：tiny 出的稿基本读不了（「考研」全写成「烤煙」），
-small 能读（「刘晓媛」「四级成绩」「五百八」都对），medium 在无显卡的机器上跑 13:47 的视频要 30 分钟以上。
+默认模型是 `small`。本机实测（Apple Silicon CPU / int8，同一条 13:47 的口播视频）：
+
+| 模型 | 耗时 | 段 / 字 | 「考研」 | 繁体字 | 能不能读 |
+|---|---|---|---|---|---|
+| tiny | 252.6 s | 510 段 / 4827 字 | 0 次命中（写成「烤煙」8、「考验」3、「考庆」1） | 118 | 不能，句子支离 |
+| small | 504.5 s（RTF 0.61） | 145 段 / 4910 字 | 11 次全对 | 0 | 能，可当逐字稿用 |
+
+medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要再慢一倍以上。
 有 NVIDIA 卡时 `vsum/hardware.py` 会按 `nvidia-smi` 自动选 `compute_type` 并放宽模型上限，可用 `WHISPER_DEVICE` / `WHISPER_COMPUTE` 覆盖。
 真实快慢用 `vsum bench --audio <你的音频>` 量，别信估算。
 
