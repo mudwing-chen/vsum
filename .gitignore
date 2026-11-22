@@ -25,6 +25,10 @@ index.md
 # 测试固件是手写的假语料，不是真转写，必须入库（上面忽略了所有 transcript.txt）
 !tests/fixtures/**/transcript.txt
 
+# 示例产物同理：README 第一屏引用的就是它们，被上面按文件名忽略掉的话仓库里会缺文件
+!docs/example/summary.md
+!docs/example/transcript.txt
+
 # 浏览器 profile / 登录态：可能含 cookie，永远不要提交
 *.ocr-venv/
 
