@@ -99,6 +99,28 @@ vsum clip out/ 01:14 -o clip.mp4            # 剪出那一段，前后各留 1.5
 `--summary extractive|llm|none`、`--clean`、`--force`、`--json`（stdout 只打一行）、
 `--no-context`（见下）。
 
+### 全部命令
+
+`vsum --help` 打印同一张表，`vsum help <命令>` 看某个命令的全部参数。
+
+| 命令 | 干什么 |
+|---|---|
+| `vsum <文件\|链接> -o DIR` | 转写 + 导出 + 摘要（默认命令；写全就是 `vsum transcribe`） |
+| `vsum export --segments DIR -o DIR` | 从 `segments.json` 重新导出四件套（`--segments` 可以直接给目录） |
+| `vsum fetch URL -o DIR` | 只抓取：抖音 / B站 / YouTube → 本地视频 |
+| `vsum login douyin` | 扫码登录，登录态存进独立 profile |
+| `vsum batch LIST -o DIR` | 一串链接或清单文件，串行跑，失败不中断 |
+| `vsum find DIR 关键词...` | 在逐字稿里搜，命中项带 `[mm:ss]` |
+| `vsum clip DIR mm:ss -o FILE` | 按时间点剪出那一段（前后各留 1.5 秒） |
+| `vsum ocr DIR` | 抽帧 OCR，用画面上的拼写核对专名 |
+| `vsum fix DIR` | 按词表修正（默认只预演，`--apply` 才写盘） |
+| `vsum audit DIR` | 词表命中的体检报告 |
+| `vsum mine DIR` | 挖词表外的变体候选 |
+| `vsum doctor` | 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR |
+| `vsum bench --audio FILE` | 在本机音频上量 RTF，比较 compute_type |
+| `vsum eval --manifest FILE` | 按 manifest 算 CER 与术语召回 |
+| `vsum holdout --corpus DIR` | 固定语料上的 CER 与回归比较 |
+
 ## `find` 和 `clip`：这才是有用的部分
 
 ```bash
@@ -113,12 +135,25 @@ $ vsum find out/ 价格
 `find` 支持多个词（全部命中才显示）、`--context N` 带上下文、`--json` 给程序用。
 `clip` 从 `manifest.json` 记的原视频剪，找不到视频就剪 `audio.wav`。
 
-默认模型是 `small`。本机实测（Apple Silicon CPU / int8，同一条 13:47 的口播视频）：
+默认模型是 `small`。不同机器的数字不能互相比较，所以下面两组分开写，来源和命令都列出来，
+你可以用 `vsum bench` 在自己机器上重新出数。
+
+早期在一台 Apple Silicon（CPU / int8）上跑同一条 13:47 的口播视频：
 
 | 模型 | 耗时 | 段 / 字 | 「考研」 | 繁体字 | 能不能读 |
 |---|---|---|---|---|---|
 | tiny | 252.6 s | 510 段 / 4827 字 | 0 次命中（写成「烤煙」8、「考验」3、「考庆」1） | 118 | 不能，句子支离 |
 | small | 504.5 s（RTF 0.61） | 145 段 / 4910 字 | 11 次全对 | 0 | 能，可当逐字稿用 |
+
+本机（Windows 11 + NVIDIA P106-100 6 GB，CUDA / `int8_float32`）上的一条 15:41 中文口播：
+
+| 模型 | 加载 | 转写 | RTF | 段数 |
+|---|---|---|---|---|
+| small | 4.2 s | 103.8 s | 0.11 | 437 |
+
+```bash
+vsum bench --audio 你的音频.wav --model small    # 在本机复现这张表
+```
 
 medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要再慢一倍以上。
 有 NVIDIA 卡时 `vsum/hardware.py` 会按 `nvidia-smi` 自动选 `compute_type` 并放宽模型上限，可用 `WHISPER_DEVICE` / `WHISPER_COMPUTE` 覆盖。
@@ -128,6 +163,11 @@ medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要
 > `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` 的话，vsum 启动时会自动把
 > 包内 `bin/` 挂进 DLL 搜索路径，不用再手动改 PATH；真起不来会自动退回 CPU 并在
 > `manifest.json` 的 `decode.device_source` 记成 `fallback`，不会假装用了显卡。
+>
+> **`vsum doctor` 报 `hf-cache` MISSING？** 模型缓存目录不可用——换盘/搬家之后
+> `~/.cache/huggingface` 指向已移除磁盘的软链是最常见的一种，症状是模型明明下过却
+> 加载不了，报错只有 `[WinError 5] 拒绝访问`。把缓存指到可写目录再试：
+> Windows `set HF_HOME=D:\hf`，macOS/Linux `export HF_HOME=~/hf`。
 
 另外两件事默认已开，除非你要做对照实验：
 
@@ -247,24 +287,32 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 |---|---|---|
 | `WHISPER_DEVICE` | `cpu` / `cuda`，覆盖自动探测 | 自动 |
 | `WHISPER_COMPUTE` | `int8` / `int8_float32` / `float16` / `int8_float16` | 按显卡选 |
+| `WHISPER_COND` | 设 `0` 关掉条件上下文（旧行为，便于对照） | 开 |
 | `WHISPER_PROMPT` | 覆盖默认解码提示词 | 内置简中提示 |
 | `WHISPER_HOTWORDS` | 设 1 时把词表拼进解码提示词（实验性） | 关 |
 | `WHISPER_WORDS` | 设 1 时记录词级时间戳与概率 | 关 |
 | `HF_ENDPOINT` | HuggingFace 镜像 | 官方 |
+| `HF_HOME` / `HF_HUB_CACHE` | 模型缓存位置（`vsum doctor` 会查） | HuggingFace 默认 |
 | `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile | `~/.cache/vsum/chrome` |
 | `VSUM_BROWSER_ARGS` | 追加浏览器启动参数，逗号分隔；受限环境里 `--no-sandbox,--disable-gpu` 能救 `tab crashed` | 空 |
 | `SE_CACHE_PATH` | selenium 驱动缓存目录（默认目录不可写时改这里） | `~/.cache/selenium` |
 
-| `WHISPER_PROMPT` | 覆盖默认解码提示词 | 内置简中提示 |
-| `WHISPER_COND` | 设 `0` 关掉条件上下文（旧行为，便于对照） | 开 |
-| `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile 目录 | `~/.cache/vsum/chrome` |
-| `HF_HOME` / `HF_HUB_CACHE` | 模型缓存位置（`vsum doctor` 会查） | HuggingFace 默认 |
+## 退出码
+
+| 码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 2 | 用法或输入错误（文件不存在、参数不对、JSON 坏了） |
+| 3 | 缺依赖（没装 faster-whisper / selenium / ffmpeg） |
+| 4 | 转写或抓取失败（含模型加载失败） |
+| 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`） |
+| 130 | Ctrl-C 中断 |
 
 ## 开发
 
 ```bash
 python -m py_compile vsum/*.py tests/*.py
-for t in terms exports eval cli loop transcribe fetch hardware holdout browser summary p2 batch lookup; do
+for t in terms exports eval cli loop transcribe fetch hardware holdout browser summary p2 batch lookup ocr llm; do
   python "tests/test_$t.py" || exit 1
 done
 ```

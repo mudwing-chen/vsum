@@ -97,6 +97,43 @@ Common flags: `--model tiny|base|small|medium|large-v3` (default `small`, or a l
 `--lang zh|en|auto`, `--summary extractive|llm|none`, `--clean`, `--force`,
 `--json` (single-line stdout), `--no-context`.
 
+### All commands
+
+`vsum --help` prints the same table; `vsum help <command>` shows that command's full flags.
+
+| Command | What it does |
+|---|---|
+| `vsum <file\|url> -o DIR` | transcribe + export + summary (the default command; spelled out it's `vsum transcribe`) |
+| `vsum export --segments DIR -o DIR` | re-export the four formats from `segments.json` (`--segments` accepts a directory) |
+| `vsum fetch URL -o DIR` | download only: Douyin / Bilibili / YouTube → local video |
+| `vsum login douyin` | QR login, stores the session in a separate profile |
+| `vsum batch LIST -o DIR` | many links or a manifest, serial, keeps going on failure |
+| `vsum find DIR words...` | search the transcript, hits carry `[mm:ss]` |
+| `vsum clip DIR mm:ss -o FILE` | cut that bit out (1.5 s of padding) |
+| `vsum ocr DIR` | sample frames + OCR, checks proper nouns against what's on screen |
+| `vsum fix DIR` | apply the term list (dry run unless `--apply`) |
+| `vsum audit DIR` | term-list health report |
+| `vsum mine DIR` | mine variant candidates not in the term list |
+| `vsum doctor` | check python / ffmpeg / model / GPU / browser / OCR |
+| `vsum bench --audio FILE` | measure RTF on your own audio, compare compute types |
+| `vsum eval --manifest FILE` | CER and term recall for one run |
+| `vsum holdout --corpus DIR` | CER and regression comparison over a fixed corpus |
+
+## How fast is it?
+
+`vsum bench` measures your own machine. These are two real runs, not estimates:
+
+| Machine | Model | Audio | Time | RTF |
+|---|---|---|---|---|
+| Windows 11, NVIDIA P106-100 6 GB (`int8_float32`) | small | 15:41 | 103.8 s | 0.11 |
+| Apple Silicon, CPU (`int8`) | small | 13:47 | 504.5 s | 0.61 |
+| Apple Silicon, CPU (`int8`) | tiny | 13:47 | 252.6 s | 0.31 |
+
+RTF is compute-seconds per audio-second: 0.11 ≈ 9× faster than real time. `tiny` is fast
+but not usable as a transcript — on Chinese it turned 考研 into 烤煙 (8×), 考验 (3×) and
+考庆 (1×), never once getting it right. `small` is the default for that reason.
+`medium` / `large-v3` need 1.5 GB / 3 GB of weights and roughly double the CPU time again.
+
 ## `find` and `clip` — the actually useful part
 
 ```bash

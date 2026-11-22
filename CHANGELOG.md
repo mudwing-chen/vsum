@@ -2,6 +2,55 @@
 
 按「会改变产物」和「只是更方便」两类记。版本号遵循语义化版本。
 
+## 0.6.0 — 2026-11-22
+
+这一版不碰产物格式，全是「装上之后不迷路」的修补。
+
+### 新增
+
+- **`vsum --help` 现在给出全部 15 条命令**，按转写 / 抓取 / 查询与剪辑 / 核对与修正 /
+  诊断与评测分组。之前只打主命令的 argparse usage，`find` `clip` `ocr` `fix` `audit`
+  `mine` `eval` `holdout` 八个命令在帮助里一个字都没有——装完根本不知道有这些功能。
+- **`vsum help <命令>`** 直达某个命令的完整参数；`vsum` 不带参数也打印这张表（退出码 0，
+  以前是 usage 报错 + 退出码 2）。
+- **`vsum doctor` 多一行 `hf-cache`**：模型缓存目录能不能用单独报。搬家/换盘之后
+  `~/.cache/huggingface` 指向已移除磁盘是最常见的一种坏法，以前只表现为「模型明明下过
+  却加载不了」，原始报错是 `[WinError 5] 拒绝访问`，看不出跟缓存有关。
+- **模型加载失败时给缓存提示**：报错里直接写出当前缓存目录和改法（`set HF_HOME=...`）。
+- **`vsum transcribe`**：默认命令的显式名字，`vsum transcribe x.mp4 -o out` 与
+  `vsum x.mp4 -o out` 等价。写全命令名后 `vsum help transcribe` 才有东西可看。
+- **`pip install "vsum[all]"`**：一次装齐 selenium / yt-dlp / rapidocr。
+- README 补「全部命令」「退出码」两张表，英文 README 同步。
+- README 的速度表分成两组来源（Apple Silicon 的历史数值 + 本机 P106 的复测：
+  15:41 音频 103.8 s、RTF 0.11），并给出 `vsum bench` 复现命令；英文 README 补同款
+  「How fast is it?」一节——之前的数字没写清是哪台机器上的。
+
+### 改变
+
+- **`--help` 里每个参数都有说明了**：`-o` `--lang` `--pack` `--clean` `--words` `--summary`
+  `--llm-model`、`find --limit`、`audit` 的四个参数、`mine` 的四个参数、`fix --terms`
+  之前要么没说明，要么只有占位符 `--limit LIMIT`。
+- **`vsum export --segments` 可以直接给输出目录**，不用记 `segments.json` 在哪一层。
+- **`vsum bench` 先跑本机实际会用的 `compute_type`**：Pascal（P106 这类）上 float16 是软件
+  模拟的，之前排第一，等于先白等几分钟才拿到有意义的数。
+- pyproject 补全元数据：Homepage / Source / Issues / Changelog / Releases 链接、维护者、
+  15 个 classifiers、Python 3.9–3.13 声明。
+
+### 修复
+
+- **`vsum bench` 在任何 av>=16 的环境里都是坏的**：它把音频**路径**交给 faster-whisper，
+  于是走 `av.decode_audio`；而 av 16 之后去掉了 `metadata_errors` 参数，faster-whisper
+  1.2.x 还在传，直接 `TypeError: open() got an unexpected keyword argument`。主转写路径
+  因为喂的是数组所以没事——也就是说这个 bug 只在 bench 上，而 bench 正是「想知道该用什么
+  配置」的人第一个会跑的命令。现在 bench 自己用 ffmpeg 转 16k 单声道 wav、按数组喂模型，
+  和主路径一致。
+- **`tests/test_browser.py` 在任何 Windows 上都是红的**：两处断言拿 `expanduser()` 的原始串
+  去比 `abspath()` 的返回值，`C:\a/b` 与 `C:\a\b` 必然不等。CI 的 windows job 一直在跑这个
+  文件。现在期望值也走 `abspath`，两端一致。
+- README 的「环境变量」被之前的编辑搞成了两张表：`WHISPER_PROMPT` 和 `VSUM_BROWSER_PROFILE`
+  各出现两次，`WHISPER_COND` / `HF_HOME` 掉在第二张里。合并成一张。
+- README「开发」段的测试清单漏了 `ocr` 和 `llm`（CI 是跑全的，照文档跑会少两个）。
+
 ## 0.5.0 — 2026-11-22
 
 ### 新增
