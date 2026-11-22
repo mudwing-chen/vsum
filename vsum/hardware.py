@@ -77,16 +77,29 @@ def probe():
 def _cuda_device_count():
     """ctranslate2 报的 CUDA 设备数；导入失败或没装当 0。
 
-    只在 nvidia-smi 真探到卡时才调用：`import ctranslate2` 冷启动要 20~30 秒
-    （加载 CUDA/cuDNN 运行库），在没有 NVIDIA 卡的机器上纯属白等——`vsum doctor`
-    曾因此从 1 秒变成 30 秒以上，看起来像挂死。
+    `import ctranslate2` 会去加载 CUDA/cuDNN 运行库，本机实测冷启动 25~77 秒。
+    所以只有当 nvidia-smi 什么都没探到、但机器上确实有 CUDA 运行库（nvcuda.dll）时
+    才走这条路——那是 WSL/容器里「没有 nvidia-smi 但有卡」的兜底。
+    有 nvidia-smi 且报了卡的情况不需要问 ctranslate2，省的这几秒曾让 `vsum doctor`
+    看起来像挂死。
     """
+    if not _cuda_runtime_present():
+        return 0
     try:
         import ctranslate2
 
         return ctranslate2.get_cuda_device_count()
     except Exception:
         return 0
+
+
+def _cuda_runtime_present():
+    if os.environ.get("CUDA_PATH"):
+        return True
+    for root in (os.environ.get("SystemRoot", r"C:\Windows"), r"C:\Windows"):
+        if os.path.exists(os.path.join(root, "System32", "nvcuda.dll")):
+            return True
+    return False
 
 
 def resolve(gpus=None, cuda_count=None):
@@ -96,7 +109,8 @@ def resolve(gpus=None, cuda_count=None):
     if gpus is None:
         gpus = probe()
     if cuda_count is None:
-        cuda_count = _cuda_device_count() if gpus else 0
+        # nvidia-smi 已经报了卡就不用再问 ctranslate2：结论一样，代价是几十秒。
+        cuda_count = len(gpus) if gpus else _cuda_device_count()
     auto = choose(gpus) if cuda_count else choose([])
     cfg = dict(auto)
     cfg["source"] = "auto"
