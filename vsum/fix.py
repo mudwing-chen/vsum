@@ -176,7 +176,7 @@ def process(path, rules, apply, apply_medium, ocr_surfaces=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="vsum fix", description="按术语表修正转写文本")
     ap.add_argument("path", help="语料根目录，或单个 transcript.txt")
-    ap.add_argument("--terms", default=None)
+    ap.add_argument("--terms", default=None, help="词表路径，默认包内 data/terms.json")
     ap.add_argument("--from-ocr", default=None, metavar="OCR_JSON",
                     help="把 vsum ocr 的候选并进本次修正（画面上的拼写当权威），无需改词表")
     ap.add_argument("--apply", action="store_true", help="真的写 transcript.fixed.txt（默认只预演）")

@@ -1,24 +1,91 @@
 # -*- coding: utf-8 -*-
-"""vsum 命令行入口。"""
+"""vsum 命令行入口。
+
+三个约定：
+
+- 不带参数、``vsum --help``、``vsum help`` 打印同一张分组总览；
+- 每个子命令自己的参数由 argparse 提供，``vsum help <子命令>`` 直达；
+- 命令总览和 SUB 分发必须一一对应，对不上就是 bug（tests/test_cli.py 会查）。
+"""
 import argparse
 import contextlib
 import io
 import json
 import os
 import sys
+import unicodedata
 
 from . import (__version__, audit, batch as batch_mod, bench as bench_mod, browser as browser_mod, doctor, evaluate, export as export_mod, fetch as fetch_mod, fix, holdout, lookup, mine_variants, ocr as ocr_mod, pipeline, transcribe)
+
+# 命令总览：(子命令, 分组, 用法片段, 一句话说明)
+# 这张表就是用户看到的第一屏，也是 tests/test_cli.py 校验 SUB 覆盖度的依据。
+# transcribe 是默认命令的显式名字：不带命令名时走同一条路径。
+COMMANDS = [
+    ("transcribe", "转写", "<文件|链接> -o DIR", "转写 + 导出 + 摘要（默认命令，可省掉命令名）"),
+    ("export", "转写", "--segments FILE -o DIR", "从 segments.json 重新导出四件套"),
+    ("fetch", "抓取", "URL -o DIR", "只抓取：抖音 / B站 / YouTube → 本地视频"),
+    ("login", "抓取", "douyin", "扫码登录，登录态存进独立 profile"),
+    ("batch", "抓取", "LIST -o DIR", "一串链接或清单文件，串行跑，失败不中断"),
+    ("find", "查询与剪辑", "DIR 关键词...", "在逐字稿里搜，命中项带 [mm:ss]"),
+    ("clip", "查询与剪辑", "DIR mm:ss -o FILE", "按时间点剪出那一段（前后各留 1.5 秒）"),
+    ("ocr", "核对与修正", "DIR", "抽帧 OCR，用画面上的拼写核对专名"),
+    ("fix", "核对与修正", "DIR", "按词表修正（默认只预演，--apply 才写盘）"),
+    ("audit", "核对与修正", "DIR", "词表命中的体检报告"),
+    ("mine", "核对与修正", "DIR", "挖词表外的变体候选"),
+    ("doctor", "诊断与评测", "", "逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR"),
+    ("bench", "诊断与评测", "--audio FILE", "在本机音频上量 RTF，比较 compute_type"),
+    ("eval", "诊断与评测", "--manifest FILE", "按 manifest 算 CER 与术语召回"),
+    ("holdout", "诊断与评测", "--corpus DIR", "固定语料上的 CER 与回归比较"),
+]
+
+
+def _width(text):
+    """终端显示宽度：CJK 与全角符号占两格，按 len() 对齐会歪。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+
+
+def overview():
+    """不带参数 / --help / help 打印的那一屏。"""
+    lines = [
+        "vsum %s — 视频/音频 → 可逐秒引用的逐字稿与带出处的摘要" % __version__,
+        "",
+        "用法",
+        "  vsum <文件|链接> -o <目录>        转写本地文件或抖音/B站/YouTube 链接",
+        "  vsum <子命令> [参数]              见下表；省掉命令名就是转写",
+        "  vsum help <子命令>                看这个子命令的全部参数",
+        "",
+    ]
+    rows = [("%s %s" % (name, synopsis)).strip() for name, _, synopsis, _ in COMMANDS]
+    pad = max(_width(r) for r in rows) + 2
+    group = None
+    for (name, grp, synopsis, desc), row in zip(COMMANDS, rows):
+        if grp != group:
+            if group is not None:
+                lines.append("")
+            lines.append(grp)
+            group = grp
+        lines.append("  %s%s%s" % (row, " " * (pad - _width(row)), desc))
+    lines += [
+        "",
+        "退出码：0 成功 · 2 用法或输入错误 · 3 缺依赖 · 4 转写/抓取失败 · 5 评测不达标 · 130 中断",
+        "环境变量、平台差异与已知限制见 README：https://github.com/mudwing-chen/vsum",
+    ]
+    return "\n".join(lines)
 
 
 def _export_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum export", description="从 segments.json 重新导出四件套")
-    ap.add_argument("--segments", required=True)
-    ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--clean", action="store_true")
+    ap.add_argument("--segments", required=True,
+                    help="segments.json 路径，也可以直接给 vsum 的输出目录")
+    ap.add_argument("-o", "--out", required=True, help="产物目录，不存在会建")
+    ap.add_argument("--clean", action="store_true", help="顺带生成清洗版 transcript.md")
     args = ap.parse_args(argv)
-    if not os.path.exists(args.segments):
-        raise pipeline.InputError("segments 文件不存在：%s" % args.segments)
-    with open(args.segments, encoding="utf-8") as fh:
+    seg_path = args.segments
+    if os.path.isdir(seg_path):
+        seg_path = os.path.join(seg_path, "segments.json")
+    if not os.path.exists(seg_path):
+        raise pipeline.InputError("segments 文件不存在：%s" % seg_path)
+    with open(seg_path, encoding="utf-8") as fh:
         segments = json.load(fh).get("segments", [])
     os.makedirs(args.out, exist_ok=True)
     clean_md = None
@@ -26,7 +93,7 @@ def _export_cmd(argv):
         from . import clean as clean_mod
 
         clean_md = clean_mod.clean_md(segments)
-    outputs, warnings = export_mod.export_all(segments, args.out, clean_md, source=args.segments)
+    outputs, warnings = export_mod.export_all(segments, args.out, clean_md, source=seg_path)
     for name, path in outputs.items():
         print("%-9s %s" % (name, os.path.basename(path)))
     if warnings["long_cues"]:
@@ -38,21 +105,24 @@ def _export_cmd(argv):
 
 def _doctor_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum doctor", description="检查依赖")
-    ap.add_argument("--model", default="small")
+    ap.add_argument("--model", default="small", help="顺带检查这个模型能不能加载（默认 small）")
     args = ap.parse_args(argv)
     return doctor.run(args.model)
 
 
-def _main_cmd(argv):
-    ap = argparse.ArgumentParser(prog="vsum", description="逐字稿工具：vsum <file> -o DIR")
+def _main_cmd(argv, prog="vsum"):
+    ap = argparse.ArgumentParser(prog=prog, description="逐字稿工具：vsum <file> -o DIR")
     ap.add_argument("input", help="本地音视频文件，或抖音/B站/YouTube 链接")
-    ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("-o", "--out", required=True, help="产物目录，不存在会建")
     ap.add_argument("--model", default="small",
                     help="tiny|base|small|medium|large-v3，或本地模型目录（默认 small）")
-    ap.add_argument("--lang", default="zh")
-    ap.add_argument("--pack", default=None, help="术语包（JSON）")
-    ap.add_argument("--clean", action="store_true")
-    ap.add_argument("--words", action="store_true")
+    ap.add_argument("--lang", default="zh", help="语言：zh / en / auto（默认 zh）")
+    ap.add_argument("--pack", default=None,
+                    help="术语包 JSON；默认用包内 data/terms.json（示例词表）")
+    ap.add_argument("--clean", action="store_true",
+                    help="额外生成一版清洗稿（去口水词与重复），只影响 transcript.md")
+    ap.add_argument("--words", action="store_true",
+                    help="记录词级时间戳与概率（更慢，manifest 里会记 word_timestamps）")
     ap.add_argument("--no-context", action="store_true",
                     help="不用上文（condition_on_previous_text=False）：更不易复读，"
                          "但中文会漂成繁体、丢标点，不推荐")
@@ -61,12 +131,14 @@ def _main_cmd(argv):
     ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控，默认可见窗口）")
     ap.add_argument("--profile", default=None, help="浏览器独立 profile 目录")
     ap.add_argument("--fetch-only", action="store_true", help="只抓取，不转写")
-    ap.add_argument("--summary", default="extractive", choices=["extractive", "llm", "none"])
-    ap.add_argument("--llm-url", default=None, help="OpenAI-compatible base，如 http://127.0.0.1:11434/v1")
-    ap.add_argument("--llm-model", default=None)
-    ap.add_argument("--force", action="store_true", help="不复用旧转写")
+    ap.add_argument("--summary", default="extractive", choices=["extractive", "llm", "none"],
+                    help="摘要模式：extractive（默认，每条必须能在原文找到）/ llm / none")
+    ap.add_argument("--llm-url", default=None,
+                    help="OpenAI-compatible base，如 http://127.0.0.1:11434/v1")
+    ap.add_argument("--llm-model", default=None, help="LLM 模型名，如 qwen2.5:7b")
+    ap.add_argument("--force", action="store_true", help="不复用旧转写，强制重跑模型")
     ap.add_argument("--json", action="store_true", help="stdout 只打一行 result.json")
-    ap.add_argument("--quiet", action="store_true", help="压制人类日志")
+    ap.add_argument("--quiet", action="store_true", help="压制人类日志，只留错误")
     ap.add_argument("--version", action="version", version="vsum " + __version__)
     args = ap.parse_args(argv)
     return pipeline.run(args.input, args.out, args.model, args.lang, args.pack,
@@ -78,11 +150,17 @@ def _main_cmd(argv):
                         context=not args.no_context)
 
 
+def _transcribe_cmd(argv):
+    """默认命令的显式名字：用法和 vsum <文件> -o DIR 完全一致。"""
+    return _main_cmd(argv, prog="vsum transcribe")
+
+
 def _fetch_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum fetch", description="只抓取：抖音 / B站 / YouTube → 本地视频")
     ap.add_argument("url")
-    ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"])
+    ap.add_argument("-o", "--out", required=True, help="产物目录，不存在会建")
+    ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"],
+                    help="用哪个浏览器；默认 Chrome，没装就 Edge")
     ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控）")
     ap.add_argument("--profile", default=None, help="浏览器独立 profile 目录")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不起浏览器")
@@ -112,17 +190,17 @@ def _login_cmd(argv):
 def _batch_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum batch", description="一串链接串行跑，失败不中断")
     ap.add_argument("list", help="urls.txt（一行一条）或 index.json（{\"items\":[{\"href\"}]}）")
-    ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="small")
-    ap.add_argument("--lang", default="zh")
-    ap.add_argument("--pack", default=None)
-    ap.add_argument("--no-context", action="store_true")
+    ap.add_argument("-o", "--out", required=True, help="产物根目录，每条一个子目录")
+    ap.add_argument("--model", default="small", help="默认 small")
+    ap.add_argument("--lang", default="zh", help="语言：zh / en / auto（默认 zh）")
+    ap.add_argument("--pack", default=None, help="术语包 JSON，默认包内 data/terms.json")
+    ap.add_argument("--no-context", action="store_true", help="关掉上文条件（不推荐，见 README）")
     ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"])
-    ap.add_argument("--headless", action="store_true")
-    ap.add_argument("--profile", default=None)
+    ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控）")
+    ap.add_argument("--profile", default=None, help="浏览器独立 profile 目录")
     ap.add_argument("--force", action="store_true", help="不跳过已完成的目录")
     ap.add_argument("--json", action="store_true", help="stdout 只打一行 batch.json")
-    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--quiet", action="store_true", help="压制人类日志")
     args = ap.parse_args(argv)
     if not os.path.exists(args.list):
         raise pipeline.InputError("清单文件不存在：%s" % args.list)
@@ -145,11 +223,11 @@ def _batch_cmd(argv):
 
 def _bench_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum bench", description="在本机音频上量 RTF，比较 compute_type")
-    ap.add_argument("--audio", default=None, help="已有音频/视频；不给就配 --synth")
-    ap.add_argument("--synth", action="store_true", help="macOS：用 say 合成一段")
-    ap.add_argument("--model", default="tiny")
+    ap.add_argument("--audio", default=None, help="已有音频/视频；不给就配 --synth（仅 macOS）")
+    ap.add_argument("--synth", action="store_true", help="macOS：用 say 合成一段测试音频")
+    ap.add_argument("--model", default="tiny", help="默认 tiny（只量速度，不比准确率）")
     ap.add_argument("--compute", default=None, help="逗号分隔；默认按设备选")
-    ap.add_argument("--lang", default="zh")
+    ap.add_argument("--lang", default="zh", help="语言：zh / en / auto（默认 zh）")
     ap.add_argument("-o", "--out", default=None, help="写 bench.json 的目录")
     args = ap.parse_args(argv)
     bench_mod.run(args.audio, args.synth, args.model, args.out, args.compute, args.lang)
@@ -157,6 +235,7 @@ def _bench_cmd(argv):
 
 
 SUB = {
+    "transcribe": _transcribe_cmd,
     "batch": _batch_cmd,
     "bench": _bench_cmd,
     "doctor": _doctor_cmd,
@@ -172,6 +251,19 @@ SUB = {
     "fix": fix.main,
     "mine": mine_variants.main,
 }
+
+
+def _help_for(name):
+    """vsum help <子命令>：把 argparse 的 --help 原样放出来。"""
+    if name not in SUB:
+        print("error: 没有这个子命令：%s" % name, file=sys.stderr)
+        print("可用：%s" % " ".join(sorted(SUB)), file=sys.stderr)
+        return 2
+    try:
+        SUB[name](["--help"])
+    except SystemExit as exc:            # argparse 打印完就退出
+        return exc.code if isinstance(exc.code, int) else 0
+    return 0
 
 
 def _utf8_on_pipe():
@@ -192,8 +284,20 @@ def main(argv=None):
     _utf8_on_pipe()
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
-        if argv and argv[0] in SUB:
-            return SUB[argv[0]](argv[1:])
+        # 总览：什么都不给、-h/--help、help 都打印同一屏
+        if not argv or argv[0] in ("-h", "--help", "-?", "help"):
+            if argv and argv[0] == "help" and len(argv) > 1:
+                return _help_for(argv[1])
+            print(overview())
+            return 0
+        # 子命令只在「确实不是同名文件」时生效：别把 vsum ocr.mp4 里的文件名当命令吃了
+        if argv[0] in SUB and not os.path.exists(argv[0]):
+            name = argv[0]
+            try:
+                rc = SUB[name](argv[1:])
+            except SystemExit as exc:    # 子命令的 argparse --help / 用法错误
+                return exc.code if isinstance(exc.code, int) else 0
+            return rc or 0
         want_json = "--json" in argv
         quiet = "--quiet" in argv
         if want_json:

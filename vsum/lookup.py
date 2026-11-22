@@ -68,7 +68,7 @@ def find_main(argv=None):
                                  description="在逐字稿里搜索，命中项带 [mm:ss]")
     ap.add_argument("path", help="输出目录，或某个 segments.json")
     ap.add_argument("query", nargs="+", help="一个或多个词（全部命中才算）")
-    ap.add_argument("--limit", type=int, default=20)
+    ap.add_argument("--limit", type=int, default=20, help="最多显示几条命中，默认 20")
     ap.add_argument("--context", type=int, default=0,
                     help="每个命中再带上前后各 N 段，方便看上下文")
     ap.add_argument("--json", action="store_true", help="stdout 只打一行 JSON")

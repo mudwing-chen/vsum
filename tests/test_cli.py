@@ -106,6 +106,32 @@ cp_out = cp.stdout.decode("utf-8", "replace")
 check("cp1252 环境不崩", cp.returncode == 0, (cp.returncode, cp_out[-80:]))
 check("管道输出 UTF-8 中文可读", "命中" in cp_out, cp_out[-80:])
 
+# 帮助入口：总览必须和真实分发表一一对应，否则用户看到的命令会名存实亡
+from vsum import cli as cli_mod  # noqa: E402
+
+listed = set(c[0] for c in cli_mod.COMMANDS)
+check("命令总览与 SUB 一一对应", listed == set(cli_mod.SUB), sorted(listed ^ set(cli_mod.SUB)))
+
+help_out = run("--help")
+check("--help 退出 0", help_out.returncode == 0, help_out.stderr)
+check("--help 列出查询与核对命令",
+      all(n in help_out.stdout for n in ("find", "clip", "ocr", "fix", "doctor")), help_out.stdout[:150])
+check("--help 带退出码说明", "退出码" in help_out.stdout)
+
+noargs = run()
+check("无参数打印帮助而不是用法错误", noargs.returncode == 0 and "用法" in noargs.stdout,
+      (noargs.returncode, noargs.stderr[:80]))
+
+one = run("help", "find")
+check("vsum help find 退出 0 且给出参数", one.returncode == 0 and "--context" in one.stdout, one.stdout[:80])
+check("vsum help 不存在的命令退出 2", run("help", "nosuch").returncode == 2)
+
+# export 直接收输出目录，省得记 segments.json 在哪
+reexp = os.path.join(tmp, "reexport")
+exp = run("export", "--segments", tmp, "-o", reexp)
+check("export 收目录", exp.returncode == 0 and os.path.exists(os.path.join(reexp, "transcript.md")),
+      (exp.returncode, exp.stderr[:80]))
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)

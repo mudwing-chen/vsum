@@ -103,10 +103,10 @@ def mine(counts, products, min_count=2, edit_only=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="vsum mine", description="挖词表外的变体候选")
-    ap.add_argument("root")
-    ap.add_argument("--top", type=int, default=40)
-    ap.add_argument("--min-count", type=int, default=2)
-    ap.add_argument("--json", default="")
+    ap.add_argument("root", help="语料根目录（下面放着各个 vsum 输出目录）")
+    ap.add_argument("--top", type=int, default=40, help="最多列几条候选，默认 40")
+    ap.add_argument("--min-count", type=int, default=2, help="至少出现几次才算候选，默认 2")
+    ap.add_argument("--json", default="", help="候选写进这个文件（默认只打印）")
     ap.add_argument("--edit-only", action="store_true", help="只跑编辑距离通道")
     ap.add_argument("--terms", default=None)
     args = ap.parse_args(argv)

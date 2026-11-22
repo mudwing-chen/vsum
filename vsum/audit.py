@@ -172,10 +172,10 @@ def run(root, out_path="term-audit.md", json_path="term-audit.json", top=30, ter
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="vsum audit", description="术语体检")
-    ap.add_argument("root")
-    ap.add_argument("--out", default="term-audit.md")
-    ap.add_argument("--json", default="term-audit.json")
-    ap.add_argument("--top", type=int, default=30)
+    ap.add_argument("root", help="语料根目录（下面放着各个 vsum 输出目录）")
+    ap.add_argument("--out", default="term-audit.md", help="报告路径，默认 term-audit.md")
+    ap.add_argument("--json", default="term-audit.json", help="机器可读报告路径")
+    ap.add_argument("--top", type=int, default=30, help="每个词条最多列几条例子，默认 30")
     ap.add_argument("--terms", default=None, help="词表路径，默认包内 data/terms.json")
     args = ap.parse_args(argv)
     if not os.path.exists(args.root):
