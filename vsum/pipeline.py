@@ -59,6 +59,22 @@ def audio_reusable(src, wav, out_dir):
     return True, ""
 
 
+def has_audio_stream(path):
+    """有音频流返回 True，没有返回 False，探不出来返回 None（不阻塞主流程）。"""
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return None
+    try:
+        out = subprocess.run([probe, "-v", "error", "-select_streams", "a",
+                              "-show_entries", "stream=index", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    return bool(out.stdout.strip())
+
+
 def ensure_audio(src, out_dir):
     wav = os.path.join(out_dir, "audio.wav")
     if os.path.exists(wav):
@@ -68,6 +84,10 @@ def ensure_audio(src, out_dir):
             return wav
         print("audio.wav 不可复用（%s），重抽" % why)
         os.remove(wav)
+    # 纯画面无音轨的文件抽出来是空 wav，ffmpeg 只会报 "does not contain any stream"，
+    # 那句话对着「转写失败」毫无帮助，先自己讲清楚。
+    if has_audio_stream(src) is False:
+        raise InputError("输入没有音频流（只有画面），没有东西可转写：%s" % os.path.basename(src))
     print("抽 16k 单声道音频")
     cmd = [ffmpeg_path(), "-y", "-v", "error", "-i", src, "-vn",
            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]

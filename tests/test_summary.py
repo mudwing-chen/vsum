@@ -79,6 +79,32 @@ finally:
 check("build 删掉回查不过的", "编造的句子" not in md4 and d4 == 1, (md4, d4))
 check("build 记 warning", any("未通过回查" in w for w in w4), w4)
 
+# 长视频：>99 分钟时分钟位是三位，回查门不能因此静默失效
+long_segs = [{"start": 6000.0, "end": 6003.0, "text": "一小时四十分钟之后的这一段",
+              "avg_logprob": -0.2}]
+long_md = "- 一小时四十分钟之后的这一段 [100:00]"
+kept, dropped_long, _ = summary.verify(long_md, long_segs)
+check("三位分钟的有效引用保留", kept.strip() == long_md and dropped_long == 0, (kept, dropped_long))
+fake_md = "- 这句原文里根本没有 [100:00]"
+_, dropped_fake, bad_fake = summary.verify(fake_md, long_segs)
+check("三位分钟的编造内容仍被删", dropped_fake == 1 and bad_fake == [fake_md], (dropped_fake, bad_fake))
+check("mmss 超过 99 分钟不丢分钟位", summary._mmss(6000) == "100:00", summary._mmss(6000))
+check("BULLET 认三位分钟", bool(summary.BULLET.match("- x [100:00]")))
+
+# LLM 分块：整份逐字稿不能塞一个 prompt
+many = [{"start": float(i * 3), "end": float(i * 3 + 3), "text": "第%d段，随便说点什么内容。" % i}
+        for i in range(400)]
+parts = summary.chunks(many)
+check("分块后块数 > 1", len(parts) > 1, len(parts))
+check("分块不丢段", sum(len(p) for p in parts) == len(many))
+check("分块保持顺序", [s for p in parts for s in p] == many)
+check("每块不超预算太多",
+      all(sum(len(s["text"]) + 9 for s in p) <= summary.CHUNK_CHARS + 200 for p in parts))
+check("空输入返回空块", summary.chunks([]) == [])
+check("单段超预算也单独成块",
+      len(summary.chunks([{"start": 0.0, "text": "长" * (summary.CHUNK_CHARS * 2)}])) == 1)
+check("llm_bullets 无 url 返回三元组", summary.llm_bullets(many, None, "x") == (None, 0, 0))
+
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))
     sys.exit(1)

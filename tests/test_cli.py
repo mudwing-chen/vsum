@@ -87,6 +87,16 @@ doc = run("doctor")
 check("doctor 不崩", doc.returncode in (0, 3), (doc.returncode, doc.stderr))
 check("doctor 有清单", "ffmpeg" in doc.stdout, doc.stdout[:80])
 
+# 没有音频流的输入要在抽音频前就报「没有东西可转写」，而不是抛 ffmpeg 的英文原文
+from vsum import pipeline  # noqa: E402
+
+_which = pipeline.shutil.which
+pipeline.shutil.which = lambda name: None
+try:
+    check("没 ffprobe 时音频探测返回 None（不阻塞）", pipeline.has_audio_stream("x.mp4") is None)
+finally:
+    pipeline.shutil.which = _which
+
 # Windows 控制台默认 cp936/cp1252：命令不能因为打印中文崩掉，管道输出要统一 UTF-8
 loop_dir = os.path.join(HERE, "fixtures", "loop")
 cp = subprocess.run([sys.executable, "-m", "vsum", "fix", loop_dir], cwd=ROOT,

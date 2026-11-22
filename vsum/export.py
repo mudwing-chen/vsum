@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 
+from .timefmt import mmss as _mmss
+
 LONG_SEC = 7.0
 LONG_CHARS = 42
 
@@ -83,11 +85,6 @@ def to_vtt(segments):
 
 def to_plain(segments):
     return "\n".join(s["text"] for s in segments)
-
-
-def _mmss(sec):
-    m, s = divmod(int(sec), 60)
-    return "%02d:%02d" % (m, s)
 
 
 LOW_CONF_Q = 0.10

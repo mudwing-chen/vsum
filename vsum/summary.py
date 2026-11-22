@@ -10,18 +10,20 @@ import unicodedata
 import urllib.request
 
 from . import termrules
+from .timefmt import mmss as _mmss
 
-BULLET = re.compile(r"^- (.+?) \[(\d{2}):(\d{2})\]$")
+# 分钟位允许 >=2 位：超过 99 分钟的视频是 `100:00`，写死两位会让这些行匹配不上，
+# verify() 直接 continue，等于长视频的引用门静默失效。
+BULLET = re.compile(r"^- (.+?) \[(\d{2,}):(\d{2})\]\s*$")
 SPLIT = re.compile(r"[。！？!?；\n]")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9_.+#-]{1,}")
 
 PROMPTS = ("所以", "因此", "但是", "关键", "注意", "第一", "其次", "最后",
            "总结", "结论", "建议", "问题", "原因", "方法", "区别")
 
-
-def _mmss(sec):
-    m, s = divmod(int(max(0.0, sec)), 60)
-    return "%02d:%02d" % (m, s)
+# LLM 摘要按字符预算切块：整份逐字稿塞一个 prompt，长视频必然超上下文。
+CHUNK_CHARS = 6000
+MAX_BULLETS = 10
 
 
 def norm(text):
@@ -156,14 +158,31 @@ def verify(md, segments):
     return "\n".join(out).rstrip() + "\n", len(bad), bad
 
 
-def llm_bullets(segments, base_url, model, timeout=90):
-    """调 OpenAI-compatible /chat/completions，返回 [{text,sec}]；失败返回 None。"""
-    if not base_url:
-        return None
-    lines = ["[%s] %s" % (_mmss(s["start"]), s["text"]) for s in segments]
-    prompt = ("下面是视频逐字稿，每行以 [mm:ss] 开头。挑最多 10 句最值得读的，"
+def chunks(segments, limit=CHUNK_CHARS):
+    """按字符预算把段切成若干块，块内顺序不变。
+
+    单段超过预算时也单独成块（截断它等于丢内容，交给模型那边报错更诚实）。
+    """
+    out, cur, size = [], [], 0
+    for seg in segments:
+        n = len(seg.get("text") or "") + 9  # "[mm:ss] " 前缀
+        if cur and size + n > limit:
+            out.append(cur)
+            cur, size = [], 0
+        cur.append(seg)
+        size += n
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _llm_ask(chunk, base_url, model, timeout):
+    """对一块逐字稿问一次；返回 [{text,sec}]，失败返回 None。"""
+    lines = ["[%s] %s" % (_mmss(s["start"]), s["text"]) for s in chunk]
+    prompt = ("下面是视频逐字稿，每行以 [mm:ss] 开头。挑最多 %d 句最值得读的，"
               "只返回 JSON 数组，元素形如 {\"text\": \"原句\", \"sec\": 12.3}；"
-              "text 必须是某一行的原文片段，sec 是该行时间戳的秒数。不要解释。\n\n" + "\n".join(lines))
+              "text 必须是某一行的原文片段，sec 是该行时间戳的秒数。不要解释。\n\n"
+              % MAX_BULLETS + "\n".join(lines))
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
                        "temperature": 0}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
@@ -183,6 +202,33 @@ def llm_bullets(segments, base_url, model, timeout=90):
         except (KeyError, TypeError, ValueError):
             continue
     return out or None
+
+
+def llm_bullets(segments, base_url, model, timeout=90):
+    """分块调 /chat/completions，返回 (bullets, 失败块数, 总块数)。
+
+    单块失败不影响其他块；全部失败返回 (None, n, n)，由 build 退回抽取式。
+    """
+    if not base_url:
+        return None, 0, 0
+    parts = chunks(segments)
+    got, failed = [], 0
+    for chunk in parts:
+        items = _llm_ask(chunk, base_url, model, timeout)
+        if items:
+            got.extend(items)
+        else:
+            failed += 1
+    if not got:
+        return None, failed, len(parts)
+    seen, merged = set(), []
+    for b in sorted(got, key=lambda x: x["sec"]):
+        key = norm(b["text"])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(b)
+    return merged[:MAX_BULLETS] or None, failed, len(parts)
 
 
 def render_llm(bullets, segments, meta, model):
@@ -210,9 +256,12 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
     warnings = []
     md = None
     if mode == "llm":
-        items = llm_bullets(segments, llm_url, llm_model or "unknown")
+        items, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown")
         if items:
             md = render_llm(items, segments, meta, llm_model)
+            if failed:
+                warnings.append("LLM 摘要 %d/%d 块失败（上下文过长/没网），只用成功块"
+                                % (failed, total))
         else:
             warnings.append("LLM 摘要失败（没网/没模型/返回不合法），已退回抽取式")
             mode = "extractive"

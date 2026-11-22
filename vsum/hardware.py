@@ -74,6 +74,21 @@ def probe():
         return []
 
 
+def _cuda_device_count():
+    """ctranslate2 报的 CUDA 设备数；导入失败或没装当 0。
+
+    只在 nvidia-smi 真探到卡时才调用：`import ctranslate2` 冷启动要 20~30 秒
+    （加载 CUDA/cuDNN 运行库），在没有 NVIDIA 卡的机器上纯属白等——`vsum doctor`
+    曾因此从 1 秒变成 30 秒以上，看起来像挂死。
+    """
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count()
+    except Exception:
+        return 0
+
+
 def resolve(gpus=None, cuda_count=None):
     """优先级：WHISPER_DEVICE / WHISPER_COMPUTE > 自动探测 > CPU 兜底。"""
     env_device = os.environ.get("WHISPER_DEVICE", "").strip()
@@ -81,12 +96,7 @@ def resolve(gpus=None, cuda_count=None):
     if gpus is None:
         gpus = probe()
     if cuda_count is None:
-        try:
-            import ctranslate2
-
-            cuda_count = ctranslate2.get_cuda_device_count()
-        except Exception:
-            cuda_count = 0
+        cuda_count = _cuda_device_count() if gpus else 0
     auto = choose(gpus) if cuda_count else choose([])
     cfg = dict(auto)
     cfg["source"] = "auto"
