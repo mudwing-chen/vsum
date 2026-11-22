@@ -29,10 +29,13 @@ if sys.platform != "win32":
 
 old = os.environ.get("VSUM_BROWSER_PROFILE")
 try:
+    # profile_dir 返回 abspath(expanduser(...))，断言也得先规范化：
+    # 直接比 expanduser 的原始串在 Windows 上会因为 "C:\a/b" 和 "C:\a\b" 而假红。
     os.environ["VSUM_BROWSER_PROFILE"] = "~/tmp/vsum-profile"
-    check("VSUM_BROWSER_PROFILE 生效", browser.profile_dir() == os.path.expanduser("~/tmp/vsum-profile"),
-          browser.profile_dir())
-    check("--profile 优先级最高", browser.profile_dir("/tmp/absolute-p") == "/tmp/absolute-p")
+    want = os.path.abspath(os.path.expanduser("~/tmp/vsum-profile"))
+    check("VSUM_BROWSER_PROFILE 生效", browser.profile_dir() == want, browser.profile_dir())
+    want2 = os.path.abspath("/tmp/absolute-p")
+    check("--profile 优先级最高", browser.profile_dir("/tmp/absolute-p") == want2, browser.profile_dir("/tmp/absolute-p"))
 finally:
     if old is None:
         os.environ.pop("VSUM_BROWSER_PROFILE", None)
