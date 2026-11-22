@@ -110,7 +110,18 @@ def run(model="small"):
 
     cached = _model_cached(model)
     add("model:%s" % model, bool(cached), cached or "未缓存",
-        "首次运行会自动下载（约 1.5 GB），或先跑一次 vsum 让它下载")
+        "首次运行会自动下载（small 约 480 MB / medium 约 1.5 GB），或先跑一次 vsum 让它下载")
+
+    # 抽帧 OCR 是可选依赖：只影响 vsum ocr，不影响转写
+    try:
+        has_ocr = importlib.util.find_spec("rapidocr_onnxruntime") is not None
+    except Exception:
+        has_ocr = False
+    if has_ocr:
+        rows.append(("ocr", "ok", "rapidocr 已装", ""))
+    else:
+        rows.append(("ocr", "extra", "未装",
+                     "抽帧 OCR 不可用（转写不受影响）：pip install 'vsum[ocr]'"))
 
     free = shutil.disk_usage(os.getcwd()).free / (1 << 30)
     add("disk", free > 2, "%.1f GB free" % free, "reserve >2 GB for audio + model")

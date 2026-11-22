@@ -10,7 +10,10 @@ import os
 import time
 import wave
 
-import numpy as np
+try:  # numpy 是 faster-whisper 的依赖，正常装包一定在；CI 用 --no-deps 装包时可能没有
+    import numpy as np
+except ImportError:  # pragma: no cover - 只在无依赖的测试环境发生
+    np = None
 
 from . import hardware, termrules, textnorm
 
@@ -41,6 +44,8 @@ def av_incompatible(exc):
 
 def load_audio(path):
     """16k 单声道 PCM wav -> float32 [-1,1] 数组；读不了返回 None（退回到传路径）。"""
+    if np is None:  # 没装 numpy：交给 faster-whisper 自己解码（它一定带 numpy）
+        return None
     try:
         with wave.open(path, "rb") as w:
             if w.getnchannels() != 1 or w.getsampwidth() != 2:

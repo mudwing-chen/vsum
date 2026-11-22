@@ -95,8 +95,8 @@ ocr.extract_frames = lambda video, times, out, quality=3: [(t, "fake.jpg") for t
 ocr._engine = lambda: (_ for _ in ()).throw(RuntimeError("没有 OCR 引擎：pip install 'vsum[ocr]'"))
 try:
     import json
-    import tempfile
-    d = tempfile.mkdtemp()
+    from _tmpdir import mkdtemp as _mkdtemp
+    d = _mkdtemp()
     with open(os.path.join(d, "segments.json"), "w", encoding="utf-8") as fh:
         json.dump({"segments": segs}, fh, ensure_ascii=False)
     with open(os.path.join(d, "video.mp4"), "wb") as fh:

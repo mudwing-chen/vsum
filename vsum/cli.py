@@ -38,7 +38,7 @@ def _export_cmd(argv):
 
 def _doctor_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum doctor", description="检查依赖")
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small")
     args = ap.parse_args(argv)
     return doctor.run(args.model)
 

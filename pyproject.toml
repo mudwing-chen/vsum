@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vsum"
-version = "0.4.0"
+version = "0.5.0"
 description = "视频/音频 → 可逐秒引用的逐字稿与带出处的摘要"
 readme = "README.md"
 license = {text = "MIT"}
