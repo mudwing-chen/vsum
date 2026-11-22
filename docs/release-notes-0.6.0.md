@@ -34,6 +34,13 @@ vsum 0.6.0 — 视频/音频 → 可逐秒引用的逐字稿与带出处的摘�
 - `vsum transcribe x.mp4 -o out` 与 `vsum x.mp4 -o out` 等价，只是想写全命令名时有个名字
 - 每个参数都有说明了（`-o` `--lang` `--pack` `--clean` `--words` `--summary` 之前只有占位符）
 - `vsum export --segments` 可以直接给输出目录
+- **跑完给下一步**：第一次跑完多打两行可复制的命令，不用回头翻 README
+
+```
+完成：28 段，415 字，摘要 3 条 -> C:\...\out
+  想知道某句在第几秒：vsum find out/ 关键词
+  想把那一段剪出来：  vsum clip out/ 00:41 -o clip.mp4
+```
 
 ### 真机上才会炸的两个
 
