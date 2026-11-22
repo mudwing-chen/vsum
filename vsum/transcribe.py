@@ -12,7 +12,7 @@ import wave
 
 import numpy as np
 
-from . import hardware, termrules
+from . import hardware, termrules, textnorm
 
 DEFAULT_PROMPT = "以下是普通话视频内容。"
 # 显式写死，进 manifest；温度回退会影响可复现性，但关掉它长音频更容易卡在复读上
@@ -55,6 +55,11 @@ def load_audio(path):
     if rate != SAMPLE_RATE:
         return None  # 非 16k 交给 faster-whisper 自己重采样，别在这里做半套
     return audio
+
+
+def to_simplified(text):
+    """繁转简，返回 (文本, 是否可用)。规则见 vsum/textnorm.py；不影响时间戳。"""
+    return textnorm.to_simplified(text), True
 
 
 def pick_device():
@@ -125,8 +130,10 @@ def decode_args(model_name, language, terms_path=None, words=None, context=True)
     compute = hw["compute_type"]
     prompt = os.environ.get("WHISPER_PROMPT", DEFAULT_PROMPT)
     hot = load_hotwords(terms_path)
+    # 开上下文后切句更细、逗号更多，摘要才挑得出整句；WHISPER_COND=0 可全局退回。
+    cond = bool(context) and os.environ.get("WHISPER_COND", "1").strip() not in ("", "0")
     kwargs = dict(language=language, vad_filter=True, beam_size=5,
-                  condition_on_previous_text=bool(context),
+                  condition_on_previous_text=cond,
                   temperature=TEMPERATURE, initial_prompt=prompt)
     if hot:
         kwargs["hotwords"] = hot
@@ -135,7 +142,7 @@ def decode_args(model_name, language, terms_path=None, words=None, context=True)
     recorded = {
         "model": model_name, "device": device, "compute_type": compute,
         "language": language, "beam_size": 5, "vad_filter": True,
-        "condition_on_previous_text": bool(context), "temperature": list(TEMPERATURE),
+        "condition_on_previous_text": cond, "temperature": list(TEMPERATURE), "t2s": True,
         "initial_prompt": prompt, "hotwords": bool(hot), "word_timestamps": bool(words),
         "device_source": hw["source"], "gpu": hw["name"], "model_cap": hw["model_cap"],
         "audio_input": "ndarray",
@@ -186,11 +193,18 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
 
     lines, segments = [], []
     last_report = 0.0
+    t2s_ok = False
     for s in segs:
         t = s.text.strip()
         if t:
+            # Whisper 没有正字法约束：实测 13:47 的稿子里 2.5% 的字落成繁体。
+            # 这里只转字，不动时间戳与标点。
+            t, _ok = to_simplified(t)
+            t2s_ok = True
             lines.append("[%6.1f -> %6.1f] %s" % (s.start, s.end, t))
-            segments.append(segment_record(s, recorded["word_timestamps"]))
+            rec = segment_record(s, recorded["word_timestamps"])
+            rec["text"] = t
+            segments.append(rec)
         now = time.time()
         if now - last_report > 15:
             last_report = now
@@ -206,6 +220,7 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
         json.dump({"segments": segments}, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
 
+    recorded["t2s"] = t2s_ok
     recorded["fallback_segments"] = fallback_count(segments)
     low = sorted([s for s in segments if s["avg_logprob"] is not None],
                  key=lambda s: s["avg_logprob"])[:10]

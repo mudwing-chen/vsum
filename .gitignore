@@ -42,4 +42,4 @@ ocr-venv/
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db
+Thumbs.dbtmp*/

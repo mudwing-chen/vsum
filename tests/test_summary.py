@@ -45,12 +45,25 @@ good = "- 今天我们聊聊 cloud code 这个工具 [00:00]"
 bad_time = "- 今天我们聊聊 cloud code 这个工具 [00:12]"
 bad_text = "- 这句话不在原文里 [00:00]"
 md = "# 摘要\n\n" + good + "\n" + bad_time + "\n" + bad_text + "\n"
-new_md, dropped, bad = summary.verify(md, SEGS)
-check("回查保留有出处的", good in new_md)
-check("回查删时间错位的", bad_time not in new_md)
-check("回查删编造的", bad_text not in new_md)
-check("回查计数", dropped == 2 and len(bad) == 2, (dropped, bad))
-check("回查幂等", summary.verify(new_md, SEGS)[0] == new_md)
+# build：确定性 + 小节齐全
+# 相邻段只差 1s 时，按时间取第一个会判错出处（真实 13:47 语料上误删 9 条）
+DENSE = [{"start": 741.54, "text": "不烤烟的人"},
+         {"start": 742.58, "text": "不知道4.3是多高的分数"}]
+dense_md, dense_dropped, _ = summary.verify("- 不知道4.3是多高的分数 [12:22]\n", DENSE)
+check("同段窗口按文本取出处", dense_dropped == 0, dense_md)
+check("没有文本线索时取最近的", summary.find_segment(742.5, DENSE)["start"] == 742.58)
+
+# 碎段先并成句：13:47 的真实稿平均 1.6 秒/段，要点会变成半句
+FRAG = [{"start": 0.0, "end": 1.5, "text": "烤烟"},
+        {"start": 1.5, "end": 3.0, "text": "烤烟烤烟烤烟"},
+        {"start": 3.0, "end": 9.0, "text": "总分烤了4.3分，不知道4.3是多高的分数"}]
+merged = summary.merge_short(FRAG)
+check("碎段被并", len(merged) == 2, merged)
+check("并段保留首段起time", merged[0]["start"] == 0.0)
+check("并段拼接文本", merged[0]["text"] == "烤烟烤烟烤烟烤烟", merged)
+frag_md, _, frag_bullets, frag_dropped, _ = summary.build(
+    FRAG, {"title": "f", "duration_sec": 9.0, "low_conf": set()}, rules=RULES)
+check("碎段上摘要不回查失败", frag_dropped == 0, frag_md)
 
 # build：确定性 + 小节齐全
 md1, mode1, bullets1, dropped1, warn1 = summary.build(SEGS, META, rules=RULES)

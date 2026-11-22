@@ -47,6 +47,36 @@ def score(text, rules):
     return s
 
 
+def merge_short(segments, min_chars=6, min_sec=1.5):
+    """把碎段并成句，只用于挑摘要句子，不改 transcript。
+
+    实测 13:47 的视频平均 1.6 秒/段、9.5 字/段，摘要要点全是「烤烟，烤烟」这种半句。
+    合并后 start 取第一段的 time，回查仍能定位到原文。
+    """
+    out, buf = [], None
+    for s in segments:
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(s["start"])
+        end = float(s.get("end") or start)
+        if buf is None:
+            buf = {"start": start, "end": end, "text": text}
+        else:
+            buf["text"] += text
+            buf["end"] = end
+        if len(buf["text"]) >= min_chars and (buf["end"] - buf["start"]) >= min_sec:
+            out.append(buf)
+            buf = None
+    if buf is not None:
+        if out:  # 尾部碎句并进上一句，避免要点只剩半句
+            out[-1]["text"] += buf["text"]
+            out[-1]["end"] = buf["end"]
+        else:
+            out.append(buf)
+    return out
+
+
 def candidates(segments, rules):
     """切句、过滤、去重、打分。返回 [{text,start,score}]，按 (-score, start) 排序。"""
     seen = set()
@@ -105,7 +135,7 @@ def _pick(pool, used, n):
 
 def extract(segments, meta, rules):
     """确定性抽取式摘要。返回 markdown 文本（未经回查）。"""
-    cands = candidates(segments, rules)
+    cands = candidates(merge_short(segments), rules)
     title = meta.get("title") or "（未命名）"
     duration = meta.get("duration_sec")
     low = meta.get("low_conf") or set()
@@ -157,24 +187,32 @@ def extract(segments, meta, rules):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def find_segment(sec, segments, tol=1.0):
-    """按 [mm:ss] 定位段：先找「秒数取整后完全相等」的段，再退到最近的。
+def find_segment(sec, segments, tol=1.0, text=None):
+    """按 [mm:ss] 定位段。
 
-    早先只看「起点差 ≤1s」。分段长 1.3 秒时，前一段的起点也落在 1 秒内，
-    于是取错段、文本对不上，**真引用被当成编造删掉**——14 分钟那条视频里
-    概览 3 条被删了 2 条，删的全是真的。
-    `[mm:ss]` 是 floor(start) 来的，所以反查应当比较取整后的值，而不是浮点距离。
+    两道保险：
+    1. 先找「秒数取整后完全相等」的段（`[mm:ss]` 就是 floor(start) 来的，
+       分段长 1.3 秒时，前一段起点也可能落在 1 秒内，只按浮点距离会取错段、
+       让真引用被当成编造删掉）；
+    2. 给 text 时优先挑「文本装得下它」的那段，再用距离排序兜底
+       （LLM 给的 sec 可能不准，文本对得上才是硬证据）。
     """
     want = int(max(0.0, float(sec)))
-    for s in segments:
-        if int(max(0.0, float(s["start"]))) == want:
-            return s
-    best, best_d = None, None
-    for s in segments:
-        d = abs(float(s["start"]) - float(sec))
-        if d <= tol and (best_d is None or d < best_d):
-            best, best_d = s, d
-    return best
+    near = [s for s in segments
+            if int(max(0.0, float(s["start"]))) == want
+            or abs(float(s["start"]) - float(sec)) <= tol]
+    if not near:
+        return None
+    exact = [s for s in near if int(max(0.0, float(s["start"]))) == want]
+    if exact:
+        near = exact
+    if text:
+        key = norm(text)
+        hits = [s for s in near if key in norm(s.get("text") or "")]
+        if hits:
+            near = hits
+    near.sort(key=lambda s: abs(float(s["start"]) - float(sec)))
+    return near[0]
 
 
 def verify(md, segments):
@@ -187,7 +225,7 @@ def verify(md, segments):
             continue
         text, mm, ss = m.group(1), m.group(2), m.group(3)
         want = int(mm) * 60 + int(ss)
-        seg = find_segment(want, segments)
+        seg = find_segment(want, segments, text=text)
         if seg is None or norm(text) not in norm(seg.get("text") or ""):
             bad.append(line)
             continue
@@ -353,7 +391,7 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
             mode = "extractive"
     if md is None:
         md = extract(segments, meta, rules)
-    md, dropped, bad = verify(md, segments)
+    md, dropped, bad = verify(md, merge_short(segments))
     if dropped:
         warnings.append("摘要 %d 条未通过回查，已删除" % dropped)
     bullets = sum(1 for line in md.splitlines() if BULLET.match(line))

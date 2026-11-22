@@ -18,7 +18,8 @@ def ffmpeg_path():
     path = shutil.which("ffmpeg")
     if not path:
         raise tr.DependencyError("ffmpeg 未找到：macOS 用 brew install ffmpeg，"
-                                 "Debian/Ubuntu 用 apt install ffmpeg")
+                                 "Debian/Ubuntu 用 apt install ffmpeg，"
+                                 "Windows 用 winget install Gyan.FFmpeg 或把 ffmpeg.exe 放进 PATH")
     return path
 
 

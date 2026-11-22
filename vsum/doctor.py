@@ -8,6 +8,16 @@ import subprocess
 import sys
 
 
+def ffmpeg_hint(system=None):
+    """各平台的 ffmpeg 安装命令；Windows 不再给 apt 建议。"""
+    system = sys.platform if system is None else system
+    if system.startswith("darwin"):
+        return "brew install ffmpeg"
+    if system in ("win32", "cygwin", "msys"):
+        return "winget install Gyan.FFmpeg（或把 ffmpeg.exe 放进 PATH）"
+    return "apt install ffmpeg"
+
+
 def _first_line(cmd):
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -44,7 +54,7 @@ def run(model="small"):
 
     ffmpeg = shutil.which("ffmpeg")
     add("ffmpeg", bool(ffmpeg), ffmpeg or "not found",
-        "brew install ffmpeg" if sys.platform == "darwin" else "apt install ffmpeg")
+        ffmpeg_hint())
     if ffmpeg:
         rows[-1] = ("ffmpeg", "ok", "%s  %s" % (ffmpeg, _first_line([ffmpeg, "-version"])), "")
 
