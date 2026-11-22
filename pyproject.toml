@@ -25,6 +25,8 @@ dependencies = ["faster-whisper>=1.0"]
 browser = ["selenium>=4.10"]
 # B站 / YouTube 抓取
 yt = ["yt-dlp>=2024.1"]
+# 抽帧 OCR：用画面上的拼写核对专名（onnxruntime 已由 faster-whisper 带来）
+ocr = ["rapidocr-onnxruntime>=1.3"]
 dev = []
 
 [project.scripts]

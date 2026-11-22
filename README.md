@@ -145,17 +145,34 @@ LLM 不可用时自动退回抽取式，不报错。
 ## 术语修正（要自己维护词表）
 
 转写对专有名词（产品名、人名、版本号）几乎必错，而答案通常印在画面上。
+**换更大的模型不解决这个问题**——实测 `small` 与 `medium`、CPU 与 GPU，错法完全一致。
+所以 vsum 的做法是把画面取回来对照：
+
+```bash
+pip install 'vsum[ocr]'          # 可选：抽帧 OCR（rapidocr + onnxruntime）
+vsum ocr out/                    # 抽最值得看的帧，OCR，和转写并排列出来
+vsum ocr out/ --every 30         # 也可以按间隔扫一遍，找标题卡/信息卡
+```
+
+产物：
+
+- `ocr.md`：逐帧对照（`转写: Cloud 的 Fibre 5.2` / `画面: Claude 的 Fable 5.2`），
+  以及「可能该改的拼写」候选表（画面上的写法 + 相似度 + 出现次数 + 时间）
+- `ocr.json`：同样内容的机器可读版本
+- `frames/`：抽出来的 jpg，可以直接看
+
+候选只是候选。确认后写进自己的词表再改：
 
 ```bash
 vsum fix out/                    # 预演，只报数量
 vsum fix out/ --apply            # 只写 high 置信
+vsum fix out/ --terms 我的词表.json --apply
 vsum audit out/                  # 词表命中的体检报告
 vsum mine out/                   # 挖词表外的变体候选（需人工确认）
 ```
 
-`data/terms.json` 是**示例词表**（AI 工具名），不是通用词表。要用在自己领域，
-拿 `--terms 你的词表.json`。`confidence` 是人工标签不是概率：`high` 才自动改，
-`medium` 只报不改（要改加 `--apply-medium`）。
+`data/terms.json` 是**示例词表**（AI 工具名），不是通用词表。`confidence` 是人工标签
+不是概率：`high` 才自动改，`medium` 只报不改（要改加 `--apply-medium`）。
 
 ## 平台
 
@@ -175,6 +192,7 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
   模型、语言、context 设置。
 - **摘要只保证出处**，不保证摘得对。
 - **术语指标没有真人标注集**：仓库里的漏报是回归断言，不是准确率。
+- **抽帧 OCR 只是候选**：它给的是「画面上写的是什么」，要不要改仍由人判断。
 - 中文繁简混排无法完全避免（取决于模型与上下文设置）。
 - 抖音风控阈值未知：连续失败别硬试，`batch` 串行无退避。
 

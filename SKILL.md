@@ -53,16 +53,24 @@ vsum clip out/ 03:41 -o clip.mp4        # 把那一秒前后剪出来听
 
 ## 3. 专有名词
 
-转写对插件名、包名、人名几乎必错。**画面上出现的拼写是权威的**：`LOW_CONF` 行给的是最该抽帧的时间点。
+转写对插件名、包名、人名几乎必错，换大模型也不解决（实测 small 与 medium 错法一致）。
+**画面上出现的拼写是权威的**，所以先抽帧 OCR 再改：
 
 ```bash
+pip install 'vsum[ocr]'              # 一次性
+vsum ocr out/                        # 抽低置信帧 + OCR，出 ocr.md / ocr.json
+vsum ocr out/ --every 30             # 扫标题卡/信息卡
 vsum fix out/                        # 预演
 vsum fix out/ --apply                # 只写 high 置信
 vsum fix out/ --apply --apply-medium # 连人工确认过的 medium 一起写
 vsum export --segments out/segments.fixed.json -o out2/
 ```
 
-`medium` 默认只报不改；置信度是人工标签不是概率；词表结构与抽帧细节见 [references/terms.md](references/terms.md)。
+`ocr.md` 有两节：**候选修正**（画面上的拼写 vs 转写，带相似度和时间）和**逐帧对照**
+（含逐字差异，比如「加奖」→「嘉奖」、「巴塞罗大」→「巴塞罗那」）。
+字幕与语音常差一句，所以对照是按「时间窗里最像的那段」配的，不是「包含这一秒的那段」。
+
+`medium` 默认只报不改；置信度是人工标签不是概率；细节见 [references/terms.md](references/terms.md)。
 
 ## 4. 总结（重写摘要时）
 

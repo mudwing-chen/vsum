@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-from . import (__version__, audit, batch as batch_mod, bench as bench_mod, browser as browser_mod, doctor, evaluate, export as export_mod, fetch as fetch_mod, fix, holdout, lookup, mine_variants, pipeline, transcribe)
+from . import (__version__, audit, batch as batch_mod, bench as bench_mod, browser as browser_mod, doctor, evaluate, export as export_mod, fetch as fetch_mod, fix, holdout, lookup, mine_variants, ocr as ocr_mod, pipeline, transcribe)
 
 
 def _export_cmd(argv):
@@ -163,6 +163,7 @@ SUB = {
     "fetch": _fetch_cmd,
     "find": lookup.find_main,
     "clip": lookup.clip_main,
+    "ocr": ocr_mod.main,
     "login": _login_cmd,
     "eval": evaluate.main,
     "holdout": holdout.main,
