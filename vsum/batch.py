@@ -70,7 +70,7 @@ def _atomic_write(data, path):
     os.replace(tmp, path)
 
 
-def run(list_path, out_dir, model="medium", language="zh", pack=None,
+def run(list_path, out_dir, model="small", language="zh", pack=None,
         browser=None, headless=None, profile=None, force=False):
     urls = load_list(list_path)
     os.makedirs(out_dir, exist_ok=True)

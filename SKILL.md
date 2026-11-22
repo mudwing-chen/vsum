@@ -29,7 +29,7 @@ vsum <文件或链接> -o out/
 
 产物在 `out/`：`transcript.md`、`summary.md`、`result.json`、`segments.json`、`transcript.srt/.vtt/.txt/.plain.txt`、`manifest.json`、`export.source.json`。
 
-常用参数：`--model tiny|small|medium|large-v3`（默认 medium）、`--lang zh`、`--summary extractive|llm|none`、
+常用参数：`--model tiny|small|medium|large-v3`（默认 `small`；没显卡别用 medium，13:47 的视频要 30 分钟以上）、`--lang zh`、`--summary extractive|llm|none`、
 `--clean`、`--force`、`--json`（stdout 只一行结果）、`--quiet`、`--browser auto|chrome|edge|safari`、`--headless`、`--profile`。
 
 转写慢：先用 `vsum bench --audio <样例>` 量本机 RTF，再决定模型；长音频放后台跑，别在前台等。

@@ -47,7 +47,15 @@ vsum batch urls.txt -o out/batch     # urls.txt 一行一条；也收 index.json
 `--summary extractive|llm|none`、`--llm-url`、`--force`（不复用旧转写）、`--json`（stdout 只一行 result.json）、
 `--quiet`、`--browser auto|chrome|edge|safari`、`--headless`、`--profile`。
 
-默认模型是 `medium`；显卡与 `compute_type` 由 `vsum/hardware.py` 按 `nvidia-smi` 探测后自动选，可用 `WHISPER_DEVICE` / `WHISPER_COMPUTE` 覆盖。真实快慢用 `vsum bench --audio <你的音频>` 量，别信估算。
+默认模型是 `small`。本机实测（CPU int8、60 秒中文片段）：tiny 出的稿基本读不了（「考研」全写成「烤煙」），
+small 能读（「刘晓媛」「四级成绩」「五百八」都对），medium 在无显卡的机器上跑 13:47 的视频要 30 分钟以上。
+有 NVIDIA 卡时 `vsum/hardware.py` 会按 `nvidia-smi` 自动选 `compute_type` 并放宽模型上限，可用 `WHISPER_DEVICE` / `WHISPER_COMPUTE` 覆盖。
+真实快慢用 `vsum bench --audio <你的音频>` 量，别信估算。
+
+另外两件事默认已开，除非你要做对照实验：
+
+- **条件上下文**：默认 `condition_on_previous_text=True`，切句更细（实测同段句数 11→17、句均 33.8→23.4 字、逗号 16→40），摘要才挑得出整句。要退回旧行为设 `WHISPER_COND=0`。
+- **繁简归一**：Whisper 对中文不约束正字法，实测 13:47 的稿子里 4827 字有 121 字（2.5%）落成繁体（讀/優/討厭）。写盘前按 Unicode Unihan 的单字简化映射统一成简体，映射表在 `vsum/data/t2s.json`（2623 对，剔除乾/藉/著/覆/於 这类在简体文本里也合法的字）。改不动的是**词级**差异和罕见的合体字：映射表逐字替换，遇到没收录的字原样保留。
 
 ## 产物
 
@@ -141,6 +149,7 @@ vsum export --segments out/segments.fixed.json -o out2/
 | `WHISPER_HOTWORDS` | 设 1 时把词表拼进解码提示词（实验性） | 关 |
 | `WHISPER_WORDS` | 设 1 时记录词级时间戳与概率 | 关 |
 | `WHISPER_PROMPT` | 覆盖默认解码提示词 | 内置简中提示 |
+| `WHISPER_COND` | 设 `0` 关掉条件上下文（旧行为，便于对照） | 开 |
 | `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile 目录 | `~/.cache/vsum/chrome` |
 | `HF_HOME` / `HF_HUB_CACHE` | 模型缓存位置（`vsum doctor` 会查） | HuggingFace 默认 |
 

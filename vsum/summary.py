@@ -45,6 +45,36 @@ def score(text, rules):
     return s
 
 
+def merge_short(segments, min_chars=6, min_sec=1.5):
+    """把碎段并成句，只用于挑摘要句子，不改 transcript。
+
+    实测 13:47 的视频平均 1.6 秒/段、9.5 字/段，摘要要点全是「烤烟，烤烟」这种半句。
+    合并后 start 取第一段的 time，回查仍能定位到原文。
+    """
+    out, buf = [], None
+    for s in segments:
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(s["start"])
+        end = float(s.get("end") or start)
+        if buf is None:
+            buf = {"start": start, "end": end, "text": text}
+        else:
+            buf["text"] += text
+            buf["end"] = end
+        if len(buf["text"]) >= min_chars and (buf["end"] - buf["start"]) >= min_sec:
+            out.append(buf)
+            buf = None
+    if buf is not None:
+        if out:  # 尾部碎句并进上一句，避免要点只剩半句
+            out[-1]["text"] += buf["text"]
+            out[-1]["end"] = buf["end"]
+        else:
+            out.append(buf)
+    return out
+
+
 def candidates(segments, rules):
     """切句、过滤、去重、打分。返回 [{text,start,score}]，按 (-score, start) 排序。"""
     seen = set()
@@ -85,7 +115,7 @@ def keywords(segments, rules, limit=8):
 
 def extract(segments, meta, rules):
     """确定性抽取式摘要。返回 markdown 文本（未经回查）。"""
-    cands = candidates(segments, rules)
+    cands = candidates(merge_short(segments), rules)
     title = meta.get("title") or "（未命名）"
     duration = meta.get("duration_sec")
     low = meta.get("low_conf") or set()
@@ -229,7 +259,7 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
             mode = "extractive"
     if md is None:
         md = extract(segments, meta, rules)
-    md, dropped, bad = verify(md, segments)
+    md, dropped, bad = verify(md, merge_short(segments))
     if dropped:
         warnings.append("摘要 %d 条未通过回查，已删除" % dropped)
     bullets = sum(1 for line in md.splitlines() if BULLET.match(line))

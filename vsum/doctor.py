@@ -37,7 +37,7 @@ def _model_cached(model):
     return None
 
 
-def run(model="medium"):
+def run(model="small"):
     rows, ok = [], True
 
     def add(name, good, detail, hint=""):

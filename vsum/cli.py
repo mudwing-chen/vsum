@@ -38,7 +38,7 @@ def _export_cmd(argv):
 
 def _doctor_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum doctor", description="检查依赖")
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small")
     args = ap.parse_args(argv)
     return doctor.run(args.model)
 
@@ -47,7 +47,7 @@ def _main_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum", description="逐字稿工具：vsum <file> -o DIR")
     ap.add_argument("input", help="本地音视频文件，或抖音/B站/YouTube 链接")
     ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small")
     ap.add_argument("--lang", default="zh")
     ap.add_argument("--pack", default=None, help="术语包（JSON）")
     ap.add_argument("--clean", action="store_true")
@@ -108,7 +108,7 @@ def _batch_cmd(argv):
     ap = argparse.ArgumentParser(prog="vsum batch", description="一串链接串行跑，失败不中断")
     ap.add_argument("list", help="urls.txt（一行一条）或 index.json（{\"items\":[{\"href\"}]}）")
     ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="medium")
+    ap.add_argument("--model", default="small")
     ap.add_argument("--lang", default="zh")
     ap.add_argument("--pack", default=None)
     ap.add_argument("--browser", default=None, choices=["auto", "safari", "chrome", "edge"])

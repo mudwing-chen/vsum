@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from . import hardware, termrules
+from . import hardware, termrules, textnorm
 
 DEFAULT_PROMPT = "以下是普通话视频内容。"
 # 显式写死，进 manifest；温度回退会影响可复现性，但关掉它长音频更容易卡在复读上
@@ -53,10 +53,16 @@ def _words_enabled():
     return os.environ.get("WHISPER_WORDS", "0").strip() not in ("", "0")
 
 
-def segment_record(s, words=False):
+def to_simplified(text):
+    """繁转简，返回 (文本, 是否可用)。规则见 vsum/textnorm.py；不影响时间戳。"""
+    return textnorm.to_simplified(text), True
+
+
+def segment_record(s, words=False, text=None):
     """单段 → segments.json 的记录。temperature 用来解释温度回退带来的文本差异。"""
     rec = {
-        "start": round(float(s.start), 2), "end": round(float(s.end), 2), "text": s.text.strip(),
+        "start": round(float(s.start), 2), "end": round(float(s.end), 2),
+        "text": (s.text if text is None else text).strip(),
         "avg_logprob": None if s.avg_logprob is None else round(float(s.avg_logprob), 4),
         "no_speech_prob": None if s.no_speech_prob is None else round(float(s.no_speech_prob), 4),
         "compression_ratio": None if s.compression_ratio is None else round(float(s.compression_ratio), 3),
@@ -86,8 +92,11 @@ def decode_args(model_name, language, terms_path=None, words=None):
     compute = hw["compute_type"]
     prompt = os.environ.get("WHISPER_PROMPT", DEFAULT_PROMPT)
     hot = load_hotwords(terms_path)
+    # 实测（同片段 small）：开上下文后句数 11→17、句均 33.8→23.4 字、逗号 16→40，
+    # 切句更细，摘要才挑得出整句。WHISPER_COND=0 可退回逐段独立解码。
+    cond = os.environ.get("WHISPER_COND", "1").strip() not in ("", "0")
     kwargs = dict(language=language, vad_filter=True, beam_size=5,
-                  condition_on_previous_text=False,
+                  condition_on_previous_text=cond,
                   temperature=TEMPERATURE, initial_prompt=prompt)
     if hot:
         kwargs["hotwords"] = hot
@@ -96,14 +105,15 @@ def decode_args(model_name, language, terms_path=None, words=None):
     recorded = {
         "model": model_name, "device": device, "compute_type": compute,
         "language": language, "beam_size": 5, "vad_filter": True,
-        "condition_on_previous_text": False, "temperature": list(TEMPERATURE),
+        "condition_on_previous_text": cond, "temperature": list(TEMPERATURE),
+        "t2s": True,
         "initial_prompt": prompt, "hotwords": bool(hot), "word_timestamps": bool(words),
         "device_source": hw["source"], "gpu": hw["name"], "model_cap": hw["model_cap"],
     }
     return kwargs, recorded, device, compute
 
 
-def transcribe_audio(audio_path, out_dir, model_name="medium", language="zh",
+def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
                      terms_path=None, words=None, on_progress=None):
     """跑一次转写，写 transcript.txt + segments.json，返回 (segments, info, decode 记录)。"""
     try:
@@ -127,11 +137,13 @@ def transcribe_audio(audio_path, out_dir, model_name="medium", language="zh",
 
     lines, segments = [], []
     last_report = 0.0
+    t2s_ok = False
     for s in segs:
         t = s.text.strip()
         if t:
+            t, t2s_ok = to_simplified(t)
             lines.append("[%6.1f -> %6.1f] %s" % (s.start, s.end, t))
-            segments.append(segment_record(s, recorded["word_timestamps"]))
+            segments.append(segment_record(s, recorded["word_timestamps"], text=t))
         now = time.time()
         if now - last_report > 15:
             last_report = now
@@ -148,6 +160,7 @@ def transcribe_audio(audio_path, out_dir, model_name="medium", language="zh",
         fh.write("\n")
 
     recorded["fallback_segments"] = fallback_count(segments)
+    recorded["t2s"] = t2s_ok
     low = sorted([s for s in segments if s["avg_logprob"] is not None],
                  key=lambda s: s["avg_logprob"])[:10]
     if low:

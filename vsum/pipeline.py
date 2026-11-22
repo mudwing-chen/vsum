@@ -123,7 +123,7 @@ def load_corrections(out_dir):
     return data.get("corrections") or []
 
 
-def run(src, out_dir, model="medium", language="zh", pack=None,
+def run(src, out_dir, model="small", language="zh", pack=None,
         clean_mode=False, words=None, browser=None, fetch_only=False,
         headless=None, profile=None, summary_mode="extractive",
         llm_url=None, llm_model=None, force=False):
