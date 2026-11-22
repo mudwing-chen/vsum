@@ -108,11 +108,36 @@ def fix_segments(segments, rules, apply_medium=False):
     return out
 
 
-def process(path, rules, apply, apply_medium):
+def rules_from_ocr(path):
+    """把 `vsum ocr` 的候选变成词表规则。
+
+    置信度不是拍脑袋：同一个「画面写法 vs 转写写法」在 >=2 帧里都成立、且相似度
+    >=0.8，才敢标 high 让它自动改；只出现过一次的标 medium，仍然要人过目。
+    """
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    rules = []
+    for c in doc.get("candidates") or []:
+        surface = str(c.get("surface") or "").strip().lower()
+        canonical = str(c.get("canonical") or "").strip()
+        if not surface or not canonical or surface == canonical.lower():
+            continue
+        strong = int(c.get("hits") or 0) >= 2 and (float(c.get("ratio") or 0) >= 0.8
+                                                  or c.get("why") == "sound")
+        rules.append({"canonical": canonical, "surface": surface,
+                      "confidence": "high" if strong else "medium"})
+    return rules
+
+
+def process(path, rules, apply, apply_medium, ocr_surfaces=None):
     with open(path, encoding="utf-8") as fh:
         raw = fh.read()
     lines = raw.splitlines()
     new_lines, records = fix_lines(lines, rules, apply_medium)
+    if ocr_surfaces:
+        for r in records:
+            if r["surface"] in ocr_surfaces:
+                r["source"] = "ocr"
     dirname = os.path.dirname(path)
     segments = load_segments(dirname)
     result = {"transcript": path, "low_conf": annotate(records, segments),
@@ -146,6 +171,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="vsum fix", description="按术语表修正转写文本")
     ap.add_argument("path", help="语料根目录，或单个 transcript.txt")
     ap.add_argument("--terms", default=None)
+    ap.add_argument("--from-ocr", default=None, metavar="OCR_JSON",
+                    help="把 vsum ocr 的候选并进本次修正（画面上的拼写当权威），无需改词表")
     ap.add_argument("--apply", action="store_true", help="真的写 transcript.fixed.txt（默认只预演）")
     ap.add_argument("--apply-medium", action="store_true", help="medium 命中也写盘")
     ap.add_argument("--json", default=None, help="corrections.json 输出路径")
@@ -156,9 +183,29 @@ def main(argv=None):
         print("error: 路径不存在：%s" % args.path, file=sys.stderr)
         return 2
     rules = termrules.load(args.terms)
+    ocr_surfaces = set()
+    if args.from_ocr:
+        if not os.path.exists(args.from_ocr):
+            print("error: OCR 结果不存在：%s" % args.from_ocr, file=sys.stderr)
+            return 2
+        extra = rules_from_ocr(args.from_ocr)
+        known = {(r["surface"], r["canonical"]) for r in rules}
+        confirmed = [r for r in extra if (r["surface"], r["canonical"]) in known]
+        extra = [r for r in extra if (r["surface"], r["canonical"]) not in known]
+        ocr_surfaces = {r["surface"] for r in extra}
+        rules = rules + extra
+        rules.sort(key=lambda r: (-len(r["surface"]), r["surface"]))
+        print("从 OCR 候选并入 %d 条（high %d / medium %d）"
+              % (len(extra), sum(1 for r in extra if r["confidence"] == "high"),
+                 sum(1 for r in extra if r["confidence"] != "high")))
+        if confirmed:
+            print("另有 %d 条与词表已有条目一致（画面也看到了）：%s；"
+                  "要改请看上面的 medium 提示" % (
+                      len(confirmed),
+                      "、".join("%s→%s" % (r["surface"], r["canonical"]) for r in confirmed[:5])))
     files = []
     for path in iter_transcripts(args.path):
-        res = process(path, rules, args.apply, args.apply_medium)
+        res = process(path, rules, args.apply, args.apply_medium, ocr_surfaces)
         files.append(res)
         print("%s: %d 处" % (path, len(res["corrections"])))
         for p in res.get("removed", []):

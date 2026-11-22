@@ -112,6 +112,33 @@ finally:
     ocr._engine = _engine
     ocr.extract_frames = _frames
 
+# OCR 候选接回 fix：两帧都看到 + 读音像，才算 high（可自动改）；只一帧的仍是 medium
+import json as _json  # noqa: E402
+from vsum import fix as fix_mod  # noqa: E402
+
+d2 = _mkdtemp()
+ocr_json = os.path.join(d2, "ocr.json")
+with open(ocr_json, "w", encoding="utf-8") as fh:
+    _json.dump({"candidates": [
+        {"surface": "gpd", "canonical": "GPT", "ratio": 0.67, "hits": 2, "why": "sound"},
+        {"surface": "clod", "canonical": "Claude", "ratio": 0.8, "hits": 1, "why": "shape"},
+        {"surface": "cloud", "canonical": "Claude", "ratio": 0.83, "hits": 1, "why": "shape"},
+    ]}, fh, ensure_ascii=False)
+rules = fix_mod.rules_from_ocr(ocr_json)
+got = {(r["surface"], r["confidence"]) for r in rules}
+check("两帧的读音匹配 -> high", ("gpd", "high") in got, got)
+check("只一帧 -> medium", ("clod", "medium") in got, got)
+
+with open(os.path.join(d2, "transcript.txt"), "w", encoding="utf-8") as fh:
+    fh.write("[   0.0 ->    3.0] GPD 6.2 花了 209 美元\n")
+fix_mod.main([d2, "--from-ocr", ocr_json, "--apply"])
+fixed = os.path.join(d2, "transcript.fixed.txt")
+check("--from-ocr 把高置信候选写进 fixed", os.path.exists(fixed), fixed)
+if os.path.exists(fixed):
+    body = open(fixed, encoding="utf-8").read()
+    check("替换成了画面上的写法", "GPT 6.2" in body, body)
+    check("原词没留下", "GPD" not in body, body)
+
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))
     sys.exit(1)

@@ -12,7 +12,11 @@ from vsum import evaluate  # noqa: E402
 FAIL = []
 
 
+N = [0]
+
+
 def check(name, cond, detail=""):
+    N[0] += 1
     if not cond:
         FAIL.append("%s %s" % (name, detail))
 
@@ -34,8 +38,20 @@ check("完全不同 CER 为 1", evaluate.cer("abc", "xyz") == 1.0)
 check("一字之差 CER = 1/len", abs(evaluate.cer("abcd", "abce") - 0.25) < 1e-9,
       evaluate.cer("abcd", "abce"))
 
+# cue 配对：以前要求 cue 数 == 段数才能重采样，真实字幕几乎不满足，等于永远跳过
+SEGS = [{"start": float(i), "end": float(i + 1), "text": "这是第%d句测试文本" % i} for i in range(30)]
+CUES = [(float(k * 3), float(k * 3 + 2.9),
+         "".join("这是第%d句测试文本" % i for i in range(k * 3, k * 3 + 3))) for k in range(10)]
+band = evaluate.bootstrap_cer_cues(CUES, SEGS)
+check("cue 数与段数不等也能出区间", band is not None, band)
+check("完全对得上时聚合 CER 为 0", band is not None and band[3] == 0.0, band)
+check("区间下界 <= 中位 <= 上界", band is not None and band[0] <= band[1] <= band[2], band)
+check("cue 太少不给区间", evaluate.bootstrap_cer_cues(CUES[:3], SEGS) is None)
+misaligned = [(0.0, 2.0, "完全不同的另一句话")]
+check("错配时 CER > 0", evaluate.bootstrap_cer_cues(misaligned * 6, SEGS)[3] > 0)
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)
     sys.exit(1)
-print("OK eval (%d checks)" % 11)
+print("OK eval (%d checks)" % N[0])

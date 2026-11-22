@@ -177,10 +177,12 @@ vsum ocr out/ --every 30         # 也可以按间隔扫一遍，找标题卡/�
 - `ocr.json`：同样内容的机器可读版本
 - `frames/`：抽出来的 jpg，可以直接看
 
-候选只是候选。确认后写进自己的词表再改：
+候选只是候选，但可以直接接回修正（不用手抄词表）：
 
 ```bash
-vsum fix out/                    # 预演，只报数量
+vsum fix out/ --from-ocr out/ocr.json           # 预演：把 OCR 候选并进本次修正
+vsum fix out/ --from-ocr out/ocr.json --apply   # 写盘：>=2 帧都看到的才自动改
+vsum fix out/                    # 只用词表，预演
 vsum fix out/ --apply            # 只写 high 置信
 vsum fix out/ --terms 我的词表.json --apply
 vsum audit out/                  # 词表命中的体检报告

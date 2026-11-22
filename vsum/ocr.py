@@ -305,7 +305,7 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
                 item["hits"] += 1
                 item["times"].append(p["sec"])
             else:
-                item.update({"hits": 1, "times": [p["sec"]], "ratio": c["ratio"]})
+                item.update({"hits": 1, "times": [p["sec"]], "ratio": c["ratio"], "why": c.get("why")})
 
     doc = {
         "schema": 1,
