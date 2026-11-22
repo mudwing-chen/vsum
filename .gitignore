@@ -51,3 +51,8 @@ Thumbs.db
 # 测试临时目录（系统 TEMP 不可用时 tempfile 会退化到当前目录）
 tmp*/
 .tmp/
+
+# Selenium 手动放的本机驱动（各人路径不同，不该进仓库）
+msedgedriver/
+chromedriver/
+geckodriver/

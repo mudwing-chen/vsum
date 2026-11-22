@@ -4,17 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vsum"
-version = "0.5.0"
-description = "视频/音频 → 可逐秒引用的逐字稿与带出处的摘要"
+version = "0.6.0"
+description = "Local video/audio → a transcript you can cite by the second, with provenance-checked summaries"
 readme = "README.md"
 license = {text = "MIT"}
-keywords = ["transcription", "subtitle", "whisper", "ffmpeg", "summary", "srt"]
-classifiers = [
-  "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
-  "Topic :: Multimedia :: Sound/Audio :: Speech",
-]
 requires-python = ">=3.9"
+authors = [{name = "mudwing-chen"}]
+keywords = [
+  "transcription", "subtitle", "whisper", "faster-whisper", "ffmpeg",
+  "summary", "srt", "vtt", "asr", "speech-to-text", "ocr", "cli",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Text Processing :: Linguistic",
+]
 # 不锁 av：vsum 自己用 ffmpeg 抽 16k wav、用标准库 wave 读成数组喂给模型，
 # 从不走 faster-whisper 的 decode_audio，所以 av 的版本变化影响不到转写。
 # 老版本这里钉的是 av>=11,<14，害得用户装 vsum 时被降级 av 甚至弄坏别的项目。
@@ -27,10 +41,18 @@ browser = ["selenium>=4.10"]
 yt = ["yt-dlp>=2024.1"]
 # 抽帧 OCR：用画面上的拼写核对专名（onnxruntime 已由 faster-whisper 带来）
 ocr = ["rapidocr-onnxruntime>=1.3"]
-dev = []
+# 一次装齐可选依赖：pip install "vsum[all]"
+all = ["selenium>=4.10", "yt-dlp>=2024.1", "rapidocr-onnxruntime>=1.3"]
 
 [project.scripts]
 vsum = "vsum.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mudwing-chen/vsum"
+Source = "https://github.com/mudwing-chen/vsum"
+Issues = "https://github.com/mudwing-chen/vsum/issues"
+Changelog = "https://github.com/mudwing-chen/vsum/blob/main/CHANGELOG.md"
+Releases = "https://github.com/mudwing-chen/vsum/releases"
 
 [tool.setuptools]
 packages = ["vsum"]
