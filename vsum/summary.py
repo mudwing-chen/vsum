@@ -7,6 +7,7 @@
 import json
 import re
 import unicodedata
+import urllib.error
 import urllib.request
 
 from . import termrules
@@ -287,7 +288,11 @@ def _parse_reply(content):
 
 
 def _llm_ask(chunk, base_url, model, timeout):
-    """对一块逐字稿问一次；返回 {overview, bullets}，失败返回 None。"""
+    """对一块逐字稿问一次；返回 (reply, error)，reply 为 None 时 error 说明原因。
+
+    原因要留住：摘要退回抽取式时得能告诉用户到底是没开服务、模型名不对，
+    还是服务端自己起不来（Ollama 装坏了就是这个样子）。
+    """
     lines = ["[%s] %s" % (_mmss(s["start"]), s["text"]) for s in chunk]
     prompt = (ASK_TEMPLATE % MAX_BULLETS) + "\n".join(lines)
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
@@ -296,30 +301,43 @@ def _llm_ask(chunk, base_url, model, timeout):
                                  headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8", "replace"))
         content = payload["choices"][0]["message"]["content"]
-    except Exception:
-        return None
-    return _parse_reply(content)
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        return None, ("HTTP %s %s" % (exc.code, detail)).strip()
+    except Exception as exc:
+        return None, "%s: %s" % (type(exc).__name__, str(exc)[:200])
+    reply = _parse_reply(content)
+    if reply is None:
+        return None, "模型回复里没有可解析的 JSON：%s" % content[:120].replace("\n", " ")
+    return reply, None
 
 
-def llm_bullets(segments, base_url, model, timeout=90):
+def llm_bullets(segments, base_url, model, timeout=90, errors=None):
     """分块调 /chat/completions，返回 (bullets, overview, 失败块数, 总块数)。
 
     单块失败不影响其他块；全部失败返回 (None, None, n, n)，由 build 退回抽取式。
+    errors 传一个 list 进来就会收到每次失败的原因，供上层写进 warnings。
     """
     if not base_url:
         return None, None, 0, 0
     parts = chunks(segments)
     got, overviews, failed = [], [], 0
     for chunk in parts:
-        reply = _llm_ask(chunk, base_url, model, timeout)
+        reply, err = _llm_ask(chunk, base_url, model, timeout)
         if reply:
             got.extend(reply["bullets"])
             if reply.get("overview"):
                 overviews.append(reply["overview"])
         else:
             failed += 1
+            if errors is not None and err:
+                errors.append(err)
     if not got and not overviews:
         return None, None, failed, len(parts)
     seen, merged = set(), []
@@ -380,14 +398,17 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
     warnings = []
     md = None
     if mode == "llm":
-        items, overview, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown")
+        errs = []
+        items, overview, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown",
+                                                     errors=errs)
         if items or overview:
             md = render_llm(items or [], overview, segments, meta, llm_model)
             if failed:
-                warnings.append("LLM 摘要 %d/%d 块失败（上下文过长/没网），只用成功块"
-                                % (failed, total))
+                warnings.append("LLM 摘要 %d/%d 块失败（%s），只用成功块"
+                                % (failed, total, errs[0] if errs else "原因未知"))
         else:
-            warnings.append("LLM 摘要失败（没网/没模型/返回不合法），已退回抽取式")
+            why = errs[0] if errs else "没给 --llm-url"
+            warnings.append("LLM 摘要失败（%s），已退回抽取式" % why)
             mode = "extractive"
     if md is None:
         md = extract(segments, meta, rules)

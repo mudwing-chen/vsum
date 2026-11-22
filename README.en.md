@@ -169,6 +169,22 @@ vsum fix out/ --from-ocr out/ocr.json --apply
 
 Output: `ocr.md` (side-by-side, human-readable), `ocr.json` (machine-readable), `frames/`.
 
+## Bring your own model for the summary
+
+The default summary is extractive. For a written one:
+
+```bash
+vsum talk.mp4 -o out/ --summary llm \
+  --llm-url http://127.0.0.1:11434/v1 --llm-model qwen2.5:7b
+```
+
+Any OpenAI-compatible endpoint works — Ollama, llama.cpp, LM Studio, a cloud API. Two levels on
+purpose: a one-sentence overview (model-written, explicitly labelled as *not* verbatim-verified)
+and bullets (must be a substring of a real segment, so they still pass the citation gate).
+Long transcripts are chunked; a failed chunk doesn't kill the others, and every failure reason —
+HTTP status plus the server's own message — goes into `warnings`. If the endpoint is unreachable
+vsum falls back to extractive and tells you why.
+
 ## Output files
 
 | File | Contents |
@@ -207,6 +223,9 @@ in some regions.
   `--force` can change segment counts and text; switching GPU/compute type changes it too.
   Reuse is guarded by input sha256, model, language, and context setting.
 - **The summary only guarantees provenance**, not quality.
+- **LLM mode is only tested against a protocol-level fake server** (local OpenAI-compatible
+  stub, verifying chunking, parsing, the citation gate and two-level rendering) — never
+  quality-evaluated against a real model. How good the writing is depends on the model you plug in.
 - **No human-labelled accuracy set** for the term metrics — the misses in the repo are
   regression assertions, not accuracy numbers.
 - **OCR candidates are candidates**: vsum reports what's on screen; whether to change the

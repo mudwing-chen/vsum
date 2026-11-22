@@ -28,7 +28,7 @@ SEGS = [{"start": 0.0, "end": 3.0, "text": "今天我们聊聊 Claude Code 这�
         {"start": 200.0, "end": 203.0, "text": "最后说说价格，Pro 版 20 美元", "avg_logprob": -0.2}]
 META = {"title": "demo", "duration_sec": 210.0, "low_conf": {2}}
 
-STATE = {"calls": 0, "last_prompt": "", "reply": None}
+STATE = {"calls": 0, "last_prompt": "", "reply": None, "status": 200, "error_body": ""}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -37,9 +37,13 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length).decode("utf-8"))
         STATE["calls"] += 1
         STATE["last_prompt"] = body["messages"][0]["content"]
-        payload = {"choices": [{"message": {"content": STATE["reply"]}}]}
-        raw = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
+        status = STATE.get("status", 200)
+        if status != 200:
+            raw = (STATE.get("error_body") or "{}").encode("utf-8")
+        else:
+            payload = {"choices": [{"message": {"content": STATE["reply"]}}]}
+            raw = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -93,6 +97,19 @@ try:
                                             llm_model="fake", rules=RULES)
     check("连不上也退回", mode4 == "extractive", mode4)
     check("连不上有 warning", any("退回抽取式" in w for w in warn4), warn4)
+
+    # 6) 服务端 500 且带原因（Ollama 装坏时就是这样）：warning 必须把它带出来，
+    #    否则用户只看到「已退回抽取式」，完全不知道该修什么。
+    STATE["status"] = 500
+    STATE["error_body"] = json.dumps(
+        {"error": {"message": "error starting llama-server: llama-server binary not found"}})
+    md6, mode6, _, _, warn6 = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                            rules=RULES)
+    check("HTTP 500 退回抽取式", mode6 == "extractive", mode6)
+    check("warning 带上服务端原因",
+          any("llama-server binary not found" in w for w in warn6), warn6)
+    check("HTTP 500 标出状态码", any("500" in w for w in warn6), warn6)
+    STATE["status"] = 200
 
     # 5) 长输入要分块（每块 <= CHUNK_CHARS 左右），不是一次全塞
     many = [{"start": float(i * 3), "end": float(i * 3 + 3),

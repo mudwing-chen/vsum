@@ -27,6 +27,11 @@
 
 ### 改变
 
+- **LLM 摘要失败时说清原因**：以前只记「LLM 摘要失败（没网/没模型/返回不合法），已退回抽取式」，
+  现在把 HTTP 状态码和服务端原话一起写进 `warnings`。实测值：本机 Ollama 的
+  `llama-server` 二进制缺失时，会直接写
+  `HTTP 500 {"error":{"message":"error starting llama-server: llama-server binary not found"...`，
+  而不是让人对着「已退回抽取式」猜。
 - **`--help` 里每个参数都有说明了**：`-o` `--lang` `--pack` `--clean` `--words` `--summary`
   `--llm-model`、`find --limit`、`audit` 的四个参数、`mine` 的四个参数、`fix --terms`
   之前要么没说明，要么只有占位符 `--limit LIMIT`。
