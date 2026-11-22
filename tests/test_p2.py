@@ -41,7 +41,7 @@ with open(os.path.join(out, "segments.json"), "w", encoding="utf-8") as fh:
     json.dump({"segments": SEGS}, fh, ensure_ascii=False)
 
 man = manifest_mod.build(inp, os.path.join(out, "audio.wav"),
-                         {"model": "tiny", "language": "zh"}, SEGS, {},
+                         {"model": "tiny", "language": "zh", "condition_on_previous_text": True}, SEGS, {},
                          {}, duration=18.0)
 manifest_mod.write(man, os.path.join(out, "manifest.json"))
 
@@ -80,6 +80,14 @@ ok, _, why = pipeline.segments_reusable(out, inp, "small")
 check("模型不同不复用", ok is False and "small" in why, why)
 ok, _, _ = pipeline.segments_reusable(out, inp, "tiny", force=True)
 check("--force 不复用", ok is False)
+
+# 语言/上下文变了也必须重跑：以前只比模型名，--lang en 会静默复用中文转写
+ok, _, why = pipeline.segments_reusable(out, inp, "tiny", language="en")
+check("语言不同不复用", ok is False and "语言" in why, why)
+ok, _, why = pipeline.segments_reusable(out, inp, "tiny", context=False)
+check("context 不同不复用", ok is False and "context" in why, why)
+ok, _, _ = pipeline.segments_reusable(out, inp, "tiny", language="zh", context=True)
+check("参数一致才复用", ok is True)
 
 # mode=none 删过期摘要
 with open(os.path.join(out, "summary.md"), "w", encoding="utf-8") as fh:

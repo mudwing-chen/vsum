@@ -71,7 +71,7 @@ def _atomic_write(data, path):
 
 
 def run(list_path, out_dir, model="small", language="zh", pack=None,
-        browser=None, headless=None, profile=None, force=False):
+        browser=None, headless=None, profile=None, force=False, context=True):
     urls = load_list(list_path)
     os.makedirs(out_dir, exist_ok=True)
     batch_path = os.path.join(out_dir, "batch.json")
@@ -90,7 +90,7 @@ def run(list_path, out_dir, model="small", language="zh", pack=None,
             continue
         try:
             pipeline.run(url, target, model, language, pack, browser=browser,
-                         headless=headless, profile=profile, force=force)
+                         headless=headless, profile=profile, force=force, context=context)
             status, error = "ok", None
         except KeyboardInterrupt:
             items.append({"url": url, "dir": name, "status": "interrupted"})

@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 
+from .timefmt import mmss as _mmss
+
 LONG_SEC = 7.0
 LONG_CHARS = 42
 
@@ -85,23 +87,24 @@ def to_plain(segments):
     return "\n".join(s["text"] for s in segments)
 
 
-def _mmss(sec):
-    m, s = divmod(int(sec), 60)
-    return "%02d:%02d" % (m, s)
-
-
 LOW_CONF_Q = 0.10
 CHAPTER_SEC = 300
 
 
 def low_conf_indexes(segments):
-    """avg_logprob 落在全片最低 10% 分位的段号（1 起），与 fix.annotate 同口径。"""
-    vals = sorted(s["avg_logprob"] for s in segments if s.get("avg_logprob") is not None)
-    if not vals:
+    """avg_logprob 最低的 10%（按**排名**取，1 起段号）。
+
+    早先是取一个阈值再 `<= cut`：logprob 并列很常见，一旦并列就把整段并列项
+    全标上——实测 143 段里有 26 段被标成「低置信」，全在开头，标记失去意义。
+    按排名取则恰好 14 段。
+    """
+    ranked = [(s["avg_logprob"], i) for i, s in enumerate(segments, 1)
+              if s.get("avg_logprob") is not None]
+    if not ranked:
         return set()
-    cut = vals[max(0, int(len(vals) * LOW_CONF_Q) - 1)]
-    return {i for i, s in enumerate(segments, 1)
-            if s.get("avg_logprob") is not None and s["avg_logprob"] <= cut}
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    k = max(1, int(len(ranked) * LOW_CONF_Q))
+    return {i for _, i in ranked[:k]}
 
 
 def _chapter_label(start, end):

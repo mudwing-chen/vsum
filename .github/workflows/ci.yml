@@ -36,6 +36,9 @@ jobs:
           python tests/test_summary.py
           python tests/test_p2.py
           python tests/test_batch.py
+          python tests/test_lookup.py
+          python tests/test_ocr.py
+          python tests/test_llm.py
 
   windows:
     runs-on: windows-latest
@@ -61,3 +64,6 @@ jobs:
           python tests/test_summary.py
           python tests/test_p2.py
           python tests/test_batch.py
+          python tests/test_lookup.py
+          python tests/test_ocr.py
+          python tests/test_llm.py

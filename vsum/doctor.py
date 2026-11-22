@@ -27,6 +27,9 @@ def _first_line(cmd):
 
 
 def _model_cached(model):
+    """模型可用性：本地目录直接认；否则看 HF 缓存里有没有下过同名模型。"""
+    if os.path.isdir(model):
+        return model
     roots = [os.environ.get("HF_HUB_CACHE"),
              os.path.join(os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")), "hub"),
              os.path.expanduser("~/.cache/huggingface/hub")]
@@ -74,10 +77,12 @@ def run(model="small"):
 
         av_ver = _v("av")
         major = int(av_ver.split(".")[0])
-        add("av", major < 14, av_ver,
-            "av>=14 与 faster-whisper 1.2.1 不兼容：pip install 'av<14'")
+        # vsum 把 wav 读成数组再喂模型，不走 av 的解码路径，所以 av 大版本不再卡人。
+        # 只是 faster-whisper 自己 import 时会用到它，能装上就够。
+        add("av", major >= 11, av_ver,
+            "faster-whisper 需要 av>=11：pip install 'av>=11'")
     except Exception:
-        add("av", False, "not found", "pip install 'av>=11,<14'")
+        add("av", False, "not found", "pip install 'av>=11'（随 faster-whisper 一起装）")
 
     from . import hardware
 
@@ -105,7 +110,18 @@ def run(model="small"):
 
     cached = _model_cached(model)
     add("model:%s" % model, bool(cached), cached or "未缓存",
-        "首次运行会自动下载（约 1.5 GB），或先跑一次 vsum 让它下载")
+        "首次运行会自动下载（small 约 480 MB / medium 约 1.5 GB），或先跑一次 vsum 让它下载")
+
+    # 抽帧 OCR 是可选依赖：只影响 vsum ocr，不影响转写
+    try:
+        has_ocr = importlib.util.find_spec("rapidocr_onnxruntime") is not None
+    except Exception:
+        has_ocr = False
+    if has_ocr:
+        rows.append(("ocr", "ok", "rapidocr 已装", ""))
+    else:
+        rows.append(("ocr", "extra", "未装",
+                     "抽帧 OCR 不可用（转写不受影响）：pip install 'vsum[ocr]'"))
 
     free = shutil.disk_usage(os.getcwd()).free / (1 << 30)
     add("disk", free > 2, "%.1f GB free" % free, "reserve >2 GB for audio + model")

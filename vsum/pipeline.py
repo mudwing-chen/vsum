@@ -60,6 +60,22 @@ def audio_reusable(src, wav, out_dir):
     return True, ""
 
 
+def has_audio_stream(path):
+    """有音频流返回 True，没有返回 False，探不出来返回 None（不阻塞主流程）。"""
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return None
+    try:
+        out = subprocess.run([probe, "-v", "error", "-select_streams", "a",
+                              "-show_entries", "stream=index", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    return bool(out.stdout.strip())
+
+
 def ensure_audio(src, out_dir):
     wav = os.path.join(out_dir, "audio.wav")
     if os.path.exists(wav):
@@ -69,6 +85,10 @@ def ensure_audio(src, out_dir):
             return wav
         print("audio.wav 不可复用（%s），重抽" % why)
         os.remove(wav)
+    # 纯画面无音轨的文件抽出来是空 wav，ffmpeg 只会报 "does not contain any stream"，
+    # 那句话对着「转写失败」毫无帮助，先自己讲清楚。
+    if has_audio_stream(src) is False:
+        raise InputError("输入没有音频流（只有画面），没有东西可转写：%s" % os.path.basename(src))
     print("抽 16k 单声道音频")
     cmd = [ffmpeg_path(), "-y", "-v", "error", "-i", src, "-vn",
            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]
@@ -78,8 +98,13 @@ def ensure_audio(src, out_dir):
     return wav
 
 
-def segments_reusable(out_dir, src, model, force=False):
-    """转写复用条件（全部满足）：manifest 在、输入 sha 一致、segments 非空、model 相同、没给 --force。"""
+def segments_reusable(out_dir, src, model, force=False, language=None, context=None):
+    """转写复用条件：manifest 在、输入 sha 一致、segments 非空、**解码参数全一致**、没给 --force。
+
+    只比模型名是不够的：换 language / condition_on_previous_text 都会改变输出。
+    以前这里漏了这两项，于是 `--lang en` 会静默复用中文转写，再把 md 头写成
+    `language: en` —— 产物自己和自己打架。宁可重跑，也不要作假。
+    """
     if force:
         return False, None, "指定了 --force"
     man_path = os.path.join(out_dir, "manifest.json")
@@ -90,10 +115,16 @@ def segments_reusable(out_dir, src, model, force=False):
         return False, None, "没有 segments.json"
     try:
         man = manifest_mod.read(man_path)
+        decode = man.get("decode") or {}
         if man["input"]["sha256"] != manifest_mod.sha256_file(src):
             return False, None, "输入文件 sha256 变了"
-        if (man.get("decode") or {}).get("model") != model:
-            return False, None, "上次用的模型不是 %s" % model
+        if decode.get("model") != model:
+            return False, None, "上次用的模型是 %s，这次要 %s" % (decode.get("model"), model)
+        if language is not None and decode.get("language") != language:
+            return False, None, "上次的语言是 %s，这次要 %s" % (decode.get("language"), language)
+        if context is not None and bool(decode.get("condition_on_previous_text")) != bool(context):
+            return False, None, "上次 context=%s，这次要 %s" % (
+                bool(decode.get("condition_on_previous_text")), bool(context))
     except (OSError, ValueError, KeyError):
         return False, None, "manifest 读不了或不完整"
     try:
@@ -126,7 +157,7 @@ def load_corrections(out_dir):
 def run(src, out_dir, model="small", language="zh", pack=None,
         clean_mode=False, words=None, browser=None, fetch_only=False,
         headless=None, profile=None, summary_mode="extractive",
-        llm_url=None, llm_model=None, force=False):
+        llm_url=None, llm_model=None, force=False, context=True):
     t0 = time.time()
     source_url = None
     title = None
@@ -149,26 +180,29 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         raise InputError("找不到输入文件：%s" % src)
     os.makedirs(out_dir, exist_ok=True)
 
-    reused, segments, why = segments_reusable(out_dir, src, model, force)
+    reused, segments, why = segments_reusable(out_dir, src, model, force, language, context)
     man = None
     if reused:
         man = manifest_mod.read(os.path.join(out_dir, "manifest.json"))
         decode = man.get("decode") or {}
         duration = (man.get("input") or {}).get("duration")
-        print("复用已有转写（%s 段；输入与模型都对得上），重跑导出与摘要" % len(segments))
+        print("复用已有转写（%s 段；输入、模型、语言都对得上），重跑导出与摘要" % len(segments))
     else:
         if why:
             print("重跑转写：%s" % why)
         wav = ensure_audio(src, out_dir)
         duration = probe_duration(wav)
-        segments, info, decode = tr.transcribe_audio(wav, out_dir, model, language, pack, words)
+        segments, info, decode = tr.transcribe_audio(wav, out_dir, model, language, pack, words,
+                                                     context=context)
 
+    # 标签一律取自「实际跑的参数」，不是命令行请求的参数：复用路径下两者可能不同，
+    # 用命令行参数去写 md 头就会出现「md 说 en、正文是中文、manifest 说 zh」。
     meta = {
         "title": title or os.path.splitext(os.path.basename(src))[0],
         "source": source_url or os.path.abspath(src),
         "duration_sec": duration,
-        "model": model,
-        "language": language,
+        "model": decode.get("model", model),
+        "language": decode.get("language", language),
         "terms_pack": os.path.basename(pack) if pack else None,
         "low_conf": export.low_conf_indexes(segments),
     }

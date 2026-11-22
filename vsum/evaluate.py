@@ -4,7 +4,7 @@
 口径：
 - 归一化 = NFKC + 只保留 Unicode L/N 类字符（去标点空白）+ 大小写折叠；数字不做文字转数字。
 - CER = 编辑距离 / 参考文本长度。**CER 不是比例，不能配 Wilson**；区间按 cue 配对
-  重采样（参考 .srt/.vtt 的 cue 数必须与 segments 段数相同，且 >=5 段），衡量的是
+  重采样（按时间重叠把 cue 和段配对，>=5 个 cue 才算），衡量的是
   「换成另一组同分布 cue 会差多少」。cue 聚合值系统性 >= 全局 CER——cue 边界切断
   跨句对齐，这是配对统计的定义导致的，所以两个数分开打。单条文本没有可重采样的
   单元，就不给区间（不假装能算）。
@@ -16,6 +16,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import unicodedata
 
@@ -59,41 +60,76 @@ def wilson(k, n, z=1.96):
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+TS = re.compile(r"^\s*(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
+
+
+def _secs(h, m, s, ms):
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+
 def _cues(path):
-    """按 cue 切开 srt/vtt 的正文；不是 srt/vtt 就返回 None。"""
+    """把 srt/vtt 切成 [(start, end, 文本)]；不是 srt/vtt 就返回 None。"""
     if not path.endswith((".srt", ".vtt")):
         return None
     with open(path, encoding="utf-8", errors="ignore") as fh:
         raw = fh.read()
-    cues, cur = [], []
+    cues, cur, span = [], [], None
     for line in raw.splitlines():
         t = line.strip()
         if not t:
-            if cur:
-                cues.append("".join(cur))
-                cur = []
+            if cur and span:
+                cues.append((span[0], span[1], "".join(cur)))
+            cur, span = [], span
             continue
-        if t.isdigit() or "-->" in t or t.upper() == "WEBVTT":
+        m = TS.match(t)
+        if m:
+            span = (_secs(*m.groups()[:4]), _secs(*m.groups()[4:]))
+            continue
+        if t.isdigit() or t.upper() == "WEBVTT":
             continue
         cur.append(t)
-    if cur:
-        cues.append("".join(cur))
+    if cur and span:
+        cues.append((span[0], span[1], "".join(cur)))
     return cues or None
 
 
-def bootstrap_cer_cues(ref_cues, segments, n=BOOTSTRAP, seed=SEED):
-    """按 cue 配对重采样 CER。返回 (低, 中位, 高, cue 聚合值)；段数不等或 <5 段时返回 None。
+def pair_cues(ref_cues, segments):
+    """把参考 cue 和转写段配对，返回 [(参考字数, 距离)]。
 
-    只有「参考字幕的 cue 数 == segments 数」时才能配对。cue 聚合值同样 ≥ 全局 CER——
-    cue 边界切断了跨句对齐，这是配对统计的定义决定的，不是 bug。
+    两种输入都收：
+    - [(start, end, text)]：按**时间重叠**配对（正常路径；cue 数不必等于段数）
+    - [text]：只有文本时按序号配对，要求数量相等（老调用方的兼容路径）
+
+    早先只支持后者，真实字幕几乎不满足「cue 数 == 段数」，那个能力永远输出「跳过」。
     """
-    if not ref_cues or not segments or len(ref_cues) != len(segments):
-        return None
+    if not ref_cues:
+        return []
+    if isinstance(ref_cues[0], str):
+        if len(ref_cues) != len(segments):
+            return []
+        return [(len(normalize(t)), levenshtein(normalize(t), normalize(s.get("text") or "")))
+                for t, s in zip(ref_cues, segments)]
     pairs = []
-    for ref_cue, seg in zip(ref_cues, segments):
-        r = normalize(ref_cue)
-        pairs.append((len(r), levenshtein(r, normalize(seg.get("text", "")))))
-    if len(pairs) < 5:
+    for start, end, text in ref_cues:
+        ref_n = normalize(text)
+        if not ref_n:
+            continue
+        hyp = "".join(s.get("text") or "" for s in segments
+                      if float(s.get("start") or 0) < end and float(s.get("end") or 0) > start)
+        pairs.append((len(ref_n), levenshtein(ref_n, normalize(hyp))))
+    return pairs
+
+
+def bootstrap_cer_cues(ref_cues, segments, n=BOOTSTRAP, seed=SEED):
+    """按 cue 配对重采样 CER。返回 (低, 中位, 高, cue 聚合值)；不足 5 个 cue 返回 None。
+
+    cue 聚合值系统性 ≥ 全局 CER：cue 边界切断了跨句对齐，这是配对统计的定义，
+    不是 bug。两个数分开打，别混着用。
+    """
+    if not ref_cues or not segments:
+        return None
+    pairs = pair_cues(ref_cues, segments)
+    if len(pairs) < 5 or not sum(l for l, _ in pairs):
         return None
     k = len(pairs)
     agg = sum(d for _, d in pairs) / float(sum(l for l, _ in pairs))
@@ -206,13 +242,13 @@ def run(manifest_path, ref_dir=None, min_cer=None, hyp_path=None, quiet=False):
     print("CER                 : %.2f%%  (ref %s, %d 字)" % (value * 100, os.path.basename(ref_path), ref_len))
     band = bootstrap_cer_cues(_cues(ref_path), segs)
     if band:
-        print("CER cues (paired)   : %.2f%%  (%d 段配 %d 段；cue 边界切断对齐，系统性 ≥ 全局值)"
-              % (band[3] * 100, len(segs), len(segs)))
+        cues = _cues(ref_path) or []
+        print("CER cues (paired)   : %.2f%%  (%d 个 cue 按时间配对；cue 边界切断对齐，系统性 ≥ 全局值)"
+              % (band[3] * 100, len(cues)))
         print("CER cue 95%% band    : %.2f%% .. %.2f%%  (%d 次按 cue 重采样)"
               % (band[0] * 100, band[2] * 100, BOOTSTRAP))
     else:
-        print("CER 95% band        : 跳过（参考不是 .srt/.vtt，或 cue 数与 segments 段数不等、少于 5 段；"
-              "单条文本没有可重采样的单元）")
+        print("CER 95% band        : 跳过（参考不是 .srt/.vtt，或 cue 少到没有可重采样的单元）")
 
     terms_path = man.get("terms", {}).get("path")
     if terms_path and os.path.exists(terms_path):
