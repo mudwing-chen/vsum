@@ -67,6 +67,46 @@ def to_simplified(text):
     return textnorm.to_simplified(text), True
 
 
+def ensure_cuda_libs():
+    """把 site-packages/nvidia/*/bin 加进进程的 DLL 搜索路径。
+
+    `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` 会把 dll 放在**包内的 bin/**，
+    Windows 默认不去那儿找，于是 ctranslate2 报 `cublas64_12.dll is not found`——
+    明明装了、明明有卡，就是跑不起来。这一步把那些目录挂上去。
+    """
+    roots = set()
+    try:
+        import site
+        import sysconfig
+
+        for key in ("purelib", "platlib"):
+            path = sysconfig.get_paths().get(key)
+            if path:
+                roots.add(path)
+        roots.update(site.getsitepackages() if hasattr(site, "getsitepackages") else [])
+    except Exception:
+        pass
+    if np is not None:  # 顺便把当前解释器自己的 site-packages 也算进来
+        roots.add(os.path.dirname(os.path.dirname(np.__file__)))
+    added = []
+    for root in sorted(r for r in roots if r):
+        nv = os.path.join(root, "nvidia")
+        if not os.path.isdir(nv):
+            continue
+        for sub in sorted(os.listdir(nv)):
+            bindir = os.path.join(nv, sub, "bin")
+            if not os.path.isdir(bindir):
+                continue
+            if bindir not in os.environ.get("PATH", "").split(os.pathsep):
+                os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
+                added.append(bindir)
+            try:
+                os.add_dll_directory(bindir)
+            except (AttributeError, OSError):
+                pass
+    return added
+
+
 def pick_device():
     """有 CUDA 才用 cuda；WHISPER_DEVICE 仍可覆盖。"""
     want = os.environ.get("WHISPER_DEVICE", "").strip()
@@ -166,10 +206,20 @@ def get_model(model_name, device, compute, cache=True):
         return _MODELS[key], True
     from faster_whisper import WhisperModel
 
+    if device == "cuda":
+        ensure_cuda_libs()
     model = WhisperModel(model_name, device=device, compute_type=compute)
     if cache:
         _MODELS[key] = model
     return model, False
+
+
+CUDA_HINTS = ("cublas", "cudnn", "cuda", "no kernel image", "device is detected")
+
+
+def _looks_like_cuda_problem(exc):
+    text = str(exc).lower()
+    return any(h in text for h in CUDA_HINTS)
 
 
 def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
@@ -181,7 +231,20 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
     except ImportError as exc:  # pragma: no cover - 依赖缺失路径
         raise DependencyError("faster-whisper 未安装：pip install faster-whisper（%s）" % exc)
     except Exception as exc:
-        raise DependencyError("模型加载失败（%s / %s / %s）：%s" % (model_name, device, compute, exc))
+        if device == "cuda" and _looks_like_cuda_problem(exc):
+            # 有卡但运行库不全：别把烂摊子丢给用户，退回 CPU 并说清楚
+            print("! CUDA 起不来（%s），退回 CPU" % str(exc)[:120])
+            print("! 想让 GPU 生效：pip install nvidia-cublas-cu12 nvidia-cudnn-cu12")
+            device, compute = "cpu", "int8"
+            recorded["device"] = device
+            recorded["compute_type"] = compute
+            recorded["device_source"] = "fallback"
+            recorded["cuda_error"] = str(exc)[:200]
+            kwargs, _, _, _ = decode_args(model_name, language, terms_path, words, context)
+            kwargs["condition_on_previous_text"] = recorded["condition_on_previous_text"]
+            model, cached = get_model(model_name, device, compute)
+        else:
+            raise DependencyError("模型加载失败（%s / %s / %s）：%s" % (model_name, device, compute, exc))
     if cached:
         print("模型已在内存里（%s / %s），跳过加载" % (model_name, device))
     started = time.time()

@@ -109,21 +109,27 @@ def fix_segments(segments, rules, apply_medium=False):
 
 
 def rules_from_ocr(path):
-    """把 `vsum ocr` 的候选变成词表规则。
+    """把 `vsum ocr` 的候选变成词表规则（中英同一套）。
 
-    置信度不是拍脑袋：同一个「画面写法 vs 转写写法」在 >=2 帧里都成立、且相似度
-    >=0.8，才敢标 high 让它自动改；只出现过一次的标 medium，仍然要人过目。
+    置信度不是拍脑袋：同一个「画面写法 vs 转写写法」在 >=2 帧里都成立，且
+    形状相似度 >=0.8 / 读音骨架相同 / 是逐字差异聚合出来的，才标 high 让它自动改；
+    只出现过一次的标 medium，仍然要人过目。
+
+    单字差异（「大」→「那」）一律不采用：它太容易误伤别的句子。中英都要求
+    surface 至少两个字符。
     """
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     rules = []
     for c in doc.get("candidates") or []:
+        if c.get("applicable") is False:
+            continue
         surface = str(c.get("surface") or "").strip().lower()
         canonical = str(c.get("canonical") or "").strip()
-        if not surface or not canonical or surface == canonical.lower():
+        if len(surface) < 2 or not canonical or surface == canonical.lower():
             continue
-        strong = int(c.get("hits") or 0) >= 2 and (float(c.get("ratio") or 0) >= 0.8
-                                                  or c.get("why") == "sound")
+        strong = int(c.get("hits") or 0) >= 2 and (
+            float(c.get("ratio") or 0) >= 0.8 or c.get("why") in ("sound", "char"))
         rules.append({"canonical": canonical, "surface": surface,
                       "confidence": "high" if strong else "medium"})
     return rules

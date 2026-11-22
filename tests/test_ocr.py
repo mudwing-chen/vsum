@@ -83,7 +83,7 @@ seg3, r3 = ocr.best_match("完全无关的一句话在这里", window, 0.4)
 check("不像就不硬配", seg3 is None or r3 < 0.6, (seg3, r3))
 
 # 逐字差异：同音字替换要能指出来
-check("中文字差", ocr.char_diff("甚至希特勒都对你大有加奖", "甚至希特勒都对你大有嘉奖") == [("加", "嘉")],
+check("中文字差带上下文", ocr.char_diff("甚至希特勒都对你大有加奖", "甚至希特勒都对你大有嘉奖") == [("有加奖", "有嘉奖")],
       ocr.char_diff("甚至希特勒都对你大有加奖", "甚至希特勒都对你大有嘉奖"))
 check("完全一样没有差", ocr.char_diff("一觉醒来", "一觉醒来") == [])
 check("差太多不列", ocr.char_diff("军事王牌中的王牌", "甚至希特勒都对你大有嘉奖") == [])
@@ -138,6 +138,36 @@ if os.path.exists(fixed):
     body = open(fixed, encoding="utf-8").read()
     check("替换成了画面上的写法", "GPT 6.2" in body, body)
     check("原词没留下", "GPD" not in body, body)
+
+# 中文候选：逐字差异聚合；单字不采用（带上上下文之后就 >=2 字了）
+pairs = [{"sec": 3.6, "similarity": 0.92, "diffs": [("有加奖", "有嘉奖")]},
+         {"sec": 12.0, "similarity": 0.88, "diffs": [("罗大", "罗那"), ("大", "那")]}]
+cjk = ocr.cjk_candidates(pairs)
+by_key = {(c["surface"], c["canonical"]): c for c in cjk}
+check("中文候选被聚合", ("有加奖", "有嘉奖") in by_key, cjk)
+check("多字差异可采用", by_key[("有加奖", "有嘉奖")]["applicable"] is True, by_key)
+check("单字差异只参考", by_key[("大", "那")]["applicable"] is False, by_key)
+check("中文候选标了类型", all(c["kind"] == "cjk" for c in cjk), cjk)
+agg2 = ocr.cjk_candidates([{"sec": 1.0, "similarity": 0.9, "diffs": [("罗大", "罗那")]},
+                           {"sec": 2.0, "similarity": 0.9, "diffs": [("罗大", "罗那")]}])
+check("同一处两帧 -> hits=2", agg2[0]["hits"] == 2 and agg2[0]["times"] == [1.0, 2.0], agg2)
+
+# 中文候选进 fix：两帧一致才 high；单字和 applicable=False 一律跳过
+d3 = _mkdtemp()
+ocr_json2 = os.path.join(d3, "ocr.json")
+with open(ocr_json2, "w", encoding="utf-8") as fh:
+    _json.dump({"candidates": [
+        {"surface": "罗大", "canonical": "罗那", "hits": 2, "ratio": 0.88, "why": "char",
+         "kind": "cjk", "applicable": True},
+        {"surface": "有加奖", "canonical": "有嘉奖", "hits": 1, "ratio": 0.92, "why": "char",
+         "kind": "cjk", "applicable": True},
+        {"surface": "大", "canonical": "那", "hits": 5, "ratio": 0.9, "why": "char",
+         "kind": "cjk", "applicable": False},
+    ]}, fh, ensure_ascii=False)
+zh = {(r["surface"], r["confidence"]) for r in fix_mod.rules_from_ocr(ocr_json2)}
+check("中文两帧 -> high", ("罗大", "high") in zh, zh)
+check("中文一帧 -> medium", ("有加奖", "medium") in zh, zh)
+check("单字被丢弃", all(s != "大" for s, _ in zh), zh)
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

@@ -69,22 +69,29 @@ def ratio(a, b):
 def char_diff(a, b, max_ops=4):
     """对齐两段文字，返回差异片段 [(转写片段, 画面片段)]。
 
-    只做长度相近的短片段，用来指出「同一个句子里哪几个字不一样」——
-    中文专名的错法和拉丁词不同，通常是同音字（加奖/嘉奖、希特勒/希特勤），
-    整体相似度很高，逐字对齐比算相似度更有用。
+    返回的是**带一个字符上下文**的片段。中文错法多是同音单字（加/嘉、大/那），
+    只给单字没法安全替换——「大」几乎每句都有；带上前后各一个字（「有加奖」/「有嘉奖」、
+    「罗大」/「罗那」）就变成只在那个词里生效的替换。
     """
     import difflib
 
     if not a or not b:
         return []
     ops = []
+    last_end = 0
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             continue
-        if len(a[i1:i2]) > 6 or len(b[j1:j2]) > 6:
+        if i2 - i1 > 6 or j2 - j1 > 6:
             continue
-        ops.append((a[i1:i2], b[j1:j2]))
+        left = 1 if (i1 > max(last_end, 0) and j1 > 0) else 0
+        ai, bj = i1 - left, j1 - left
+        a_frag = a[max(0, ai):min(len(a), i2 + 1)]
+        b_frag = b[max(0, bj):min(len(b), j2 + 1)]
+        if a_frag and b_frag and a_frag != b_frag:
+            ops.append((a_frag, b_frag))
+        last_end = i2 + 1
         if len(ops) >= max_ops:
             break
     return ops
@@ -109,6 +116,32 @@ def best_match(ocr_text, segments, sec, before=3.0, after=8.0):
         if r > best_r:
             best, best_r = s, r
     return best, best_r
+
+
+def cjk_candidates(pairs):
+    """把逐字差异聚成中文候选：{转写里的写法 -> 画面上的写法}。
+
+    中文的错法通常是同音字（加奖/嘉奖、巴塞罗大/巴塞罗那），整体句子相似度很高，
+    所以用逐字对齐而不是整句相似度。单字差异（「大」→「那」）只展示不采用：
+    一个字的替换太容易误伤（「大」几乎每句都有），要改必须至少两个字。
+    """
+    agg = {}
+    for p in pairs:
+        for a, b in p.get("diffs") or []:
+            a = (a or "").strip()
+            b = (b or "").strip()
+            if not a or not b or a == b or len(a) > 3 or len(b) > 3:
+                continue
+            key = (a, b)
+            cur = agg.get(key)
+            if cur:
+                cur["hits"] += 1
+                cur["times"].append(p["sec"])
+            else:
+                agg[key] = {"surface": a, "canonical": b, "hits": 1,
+                            "times": [p["sec"]], "ratio": round(p.get("similarity") or 0, 3),
+                            "why": "char", "kind": "cjk", "applicable": len(a) >= 2}
+    return list(agg.values())
 
 
 def suggest(frame_text, transcript_vocab, threshold=0.8, phonetic_floor=0.6):
@@ -305,7 +338,18 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
                 item["hits"] += 1
                 item["times"].append(p["sec"])
             else:
-                item.update({"hits": 1, "times": [p["sec"]], "ratio": c["ratio"], "why": c.get("why")})
+                item.update({"hits": 1, "times": [p["sec"]], "ratio": c["ratio"],
+                             "why": c.get("why"), "kind": "latin", "applicable": True})
+
+    # 中文：从逐字差异聚合出来，和英文候选并列
+    for c in cjk_candidates(pairs):
+        key = (c["surface"], c["canonical"])
+        item = cands.get(key)
+        if item:
+            item["hits"] += c["hits"]
+            item["times"].extend(c["times"])
+        else:
+            cands[key] = c
 
     doc = {
         "schema": 1,
@@ -313,7 +357,8 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
         "video": os.path.abspath(video),
         "frames": len(frames),
         "ocr_pairs": pairs,
-        "candidates": sorted(cands.values(), key=lambda c: (-c["hits"], c["surface"])),
+        "candidates": sorted(cands.values(),
+                             key=lambda c: (not c.get("applicable", True), -c["hits"], c["surface"])),
     }
     json_path = os.path.join(out_dir, "ocr.json")
     with open(json_path, "w", encoding="utf-8") as fh:
@@ -336,14 +381,18 @@ def _report(doc):
              "- 候选修正：%d" % len(doc["candidates"]), ""]
     if doc["candidates"]:
         lines += ["## 一、可能该改的拼写\n",
-                  "| 转写里的写法 | 画面上的写法 | 相似度 | 出现 | 时间 |",
-                  "|---|---|---|---|---|"]
+                  "| 转写里的写法 | 画面上的写法 | 类型 | 相似度 | 出现 | 时间 |",
+                  "|---|---|---|---|---|---|"]
         for c in doc["candidates"]:
             times = ", ".join(mmss(t) for t in c["times"][:3])
-            lines.append("| %s | %s | %.2f | %d | %s |"
-                         % (c["surface"], c["canonical"], c["ratio"], c["hits"], times))
+            kind = "英文" if c.get("kind", "latin") == "latin" else "中文"
+            if c.get("applicable") is False:
+                kind += "（单字，仅参考）"
+            lines.append("| %s | %s | %s | %.2f | %d | %s |"
+                         % (c["surface"], c["canonical"], kind, c["ratio"], c["hits"], times))
         lines.append("")
-        lines.append("> 这些只是候选。确认后写进自己的词表，再 `vsum fix --terms 你的词表.json --apply`。")
+        lines.append("> 这些只是候选。`vsum fix out/ --from-ocr out/ocr.json` 会把它们并进本次修正："
+                     "同一处在 ≥2 帧都成立才自动改，单次出现的只报不改。")
         lines.append("")
     lines += ["## 二、逐帧对照（画面上的拼写是权威的）\n"]
     for p in doc["ocr_pairs"]:

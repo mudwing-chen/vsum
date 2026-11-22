@@ -112,6 +112,11 @@ medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要
 有 NVIDIA 卡时 `vsum/hardware.py` 会按 `nvidia-smi` 自动选 `compute_type` 并放宽模型上限，可用 `WHISPER_DEVICE` / `WHISPER_COMPUTE` 覆盖。
 真实快慢用 `vsum bench --audio <你的音频>` 量，别信估算。
 
+> **Windows + NVIDIA 少一步？** ctranslate2 需要 CUDA 运行库。装了
+> `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` 的话，vsum 启动时会自动把
+> 包内 `bin/` 挂进 DLL 搜索路径，不用再手动改 PATH；真起不来会自动退回 CPU 并在
+> `manifest.json` 的 `decode.device_source` 记成 `fallback`，不会假装用了显卡。
+
 另外两件事默认已开，除非你要做对照实验：
 
 - **条件上下文**：默认 `condition_on_previous_text=True`，切句更细（实测同段句数 11→17、句均 33.8→23.4 字、逗号 16→40），摘要才挑得出整句。要退回旧行为设 `WHISPER_COND=0`。
@@ -176,6 +181,16 @@ vsum ocr out/ --every 30         # 也可以按间隔扫一遍，找标题卡/�
   以及「可能该改的拼写」候选表（画面上的写法 + 相似度 + 出现次数 + 时间）
 - `ocr.json`：同样内容的机器可读版本
 - `frames/`：抽出来的 jpg，可以直接看
+
+**中英文都出候选**，两套机制：
+
+| 语言 | 依据 | 例子 |
+|---|---|---|
+| 英文 | 形状相似度 ≥0.8，或读音骨架相同（Soundex） | `Cloud`→`Claude`、`GPD`→`GPT` |
+| 中文 | 带一个上下文的逐字差异 | `有加奖`→`有嘉奖`、`罗大`→`罗那` |
+
+中文为什么不给单字：`大`→`那` 这种替换会命中别的句子。带上前后各一个字，
+就变成只在那个词里生效的替换；单字差异只在 `ocr.md` 里展示，不进候选。
 
 候选只是候选，但可以直接接回修正（不用手抄词表）：
 
