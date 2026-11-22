@@ -97,13 +97,86 @@ def char_diff(a, b, max_ops=4):
     return ops
 
 
+def _edits(a, b):
+    """Levenshtein 距离（只用于很短的词，直接两行动态规划）。"""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+TRIVIAL = re.compile(r"[\s，。、；：？！,.;:?!\-—…·\"'“”‘’()（）\[\]【】]+")
+
+
+def _trivial(a, b):
+    """只差标点/空白/大小写的差异不算错字。
+
+    第一版没过滤这些，真实跑一遍出来的四条候选全是
+    「l。」→「l」「源sk」→「源Sk」这种，把真候选淹了。
+    """
+    return TRIVIAL.sub("", a or "").lower() == TRIVIAL.sub("", b or "").lower()
+
+
+def local_vocab(segments, sec, before=8.0, after=3.0):
+    """只在这个时间窗里的转写词表。
+
+    标题卡常常比台词晚一两秒出现，整片词表去比会把八竿子打不着的词配进来；
+    限定窗口后，「画面这一屏」只和「这几秒说的话」对照。
+    """
+    vocab = {}
+    for s in segments:
+        start = float(s.get("start") or 0.0)
+        if start < sec - before or start > sec + after:
+            continue
+        for tok in latin_tokens(s.get("text") or ""):
+            vocab[tok] = vocab.get(tok, 0) + 1
+    return vocab
+
+
+def near_tokens(frame_text, vocab, max_edits=2):
+    """同长度、编辑距离 <= max_edits 的拉丁词对。
+
+    语料里最典型的就是 Wipe / Vibe：读音和形状都不一样（Soundex 是 W100 / V100），
+    形状相似度只有 0.5，前两条通道都够不到——但画面上明明白白写着 Vibe。
+    这种只作为**候选**给出（applicable=False，不参与自动改），让人看一眼。
+    """
+    out = []
+    for tok in TOKEN.findall(frame_text or ""):
+        clean = tok.strip("._-")
+        low = clean.lower()
+        if len(low) < 4 or low in STOP or low in vocab:
+            continue
+        best, best_r = None, 0.0
+        for surface in vocab:
+            if len(surface) != len(low) or len(surface) < 4:
+                continue
+            if _edits(low, surface) > max_edits:
+                continue
+            r = ratio(low, surface)
+            if r > best_r:
+                best, best_r = surface, r
+        if best:
+            out.append({"canonical": clean, "surface": best,
+                        "ratio": round(best_r, 3), "why": "near"})
+    return out
+
+
 def best_match(ocr_text, segments, sec, before=3.0, after=8.0):
     """画面上的这一行，最像哪一段转写？
 
     字幕和语音不是严格对齐的：画面常常比这句话早一点或晚一点出现（实测差一整句）。
     所以不能只取「包含这一秒」的那段，要在时间窗里找最像的那段。
+
+    一帧里常常同时有标题卡和烧进画面的字幕（「Vibe 知识大赏」+「这个话题已经几十亿
+    播放量了」），整块文本和任何一句都不像。所以要**逐行**也比一遍，取最像的那一行。
     返回 (段, 相似度)；找不到够像的返回 (None, 0)。
     """
+    probes = [ln.strip() for ln in (ocr_text or "").split("\n") if ln.strip()]
+    if not probes:
+        probes = [ocr_text or ""]
     best, best_r = None, 0.0
     for s in segments:
         start = float(s.get("start") or 0.0)
@@ -112,10 +185,19 @@ def best_match(ocr_text, segments, sec, before=3.0, after=8.0):
         text = s.get("text") or ""
         if not text:
             continue
-        r = ratio(ocr_text, text)
-        if r > best_r:
-            best, best_r = s, r
+        for probe in probes:
+            r = ratio(probe, text)
+            if r > best_r:
+                best, best_r = s, r
     return best, best_r
+
+
+def best_line(text, transcript):
+    """这一帧里和某句转写最像的那一行，逐字差异要拿它算，不能拿整块。"""
+    lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+    if not lines:
+        return ""
+    return max(lines, key=lambda ln: ratio(ln, transcript))
 
 
 def cjk_candidates(pairs):
@@ -131,6 +213,8 @@ def cjk_candidates(pairs):
             a = (a or "").strip()
             b = (b or "").strip()
             if not a or not b or a == b or len(a) > 3 or len(b) > 3:
+                continue
+            if _trivial(a, b):          # 只差标点/大小写，不是错字
                 continue
             key = (a, b)
             cur = agg.get(key)
@@ -213,6 +297,8 @@ def pick_times(segments, low_conf=None, every=None, times=None, limit=24):
             break
         if latin_tokens(s.get("text") or ""):
             add(s["start"])
+            # 标题卡常常在念完之后才出现：只抽念的那一刻会错过「Vibe 知识大赏」这种画面
+            add(float(s.get("start") or 0.0) + 2.0)
     return sorted(picks)[:limit]
 
 
@@ -300,10 +386,6 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
         raise RuntimeError("一帧都没抽出来（ffmpeg 失败或时间点越界）")
 
     read, engine = _engine()
-    vocab = {}
-    for s in segments:
-        for tok in latin_tokens(s.get("text") or ""):
-            vocab[tok] = vocab.get(tok, 0) + 1
 
     pairs = []
     for t, frame in frames:
@@ -311,10 +393,12 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
         if not text:
             continue
         plain = " ".join(text.split())
-        seg, r = best_match(plain, segments, t)
+        seg, r = best_match(text, segments, t)   # 传原文，best_match 内部逐行比
         if seg is not None and r < 0.6:
             seg = None
         tr_text = (seg or {}).get("text") or ""
+        # 拉丁词只看「这几秒说的话」，别看全片词表：标题卡比台词晚一两秒出现
+        window = local_vocab(segments, t)
         pairs.append({
             "sec": t,
             "frame": os.path.basename(frame),
@@ -323,14 +407,14 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
             "match_sec": float(seg["start"]) if seg else None,
             "similarity": round(r, 3) if seg else 0.0,
             "transcript": tr_text,
-            "diffs": char_diff(tr_text, plain) if (seg and r >= 0.75) else [],
-            "suggestions": suggest(plain, vocab),
+            "diffs": char_diff(tr_text, best_line(text, tr_text)) if (seg and r >= 0.75) else [],
+            "suggestions": suggest(text, window) + near_tokens(text, window),
         })
 
     cands = {}
     for p in pairs:
-        if not p["transcript"]:
-            continue  # 画面和转写对不上时间，不当证据
+        # 拉丁词不需要整句对得上：画面里出现 Vibe、台词里是 Wipe，就是该报的候选。
+        # 它靠时间窗锚定，而不是靠整句相似度。
         for c in p["suggestions"]:
             key = (c["surface"], c["canonical"].lower())
             item = cands.get(key)
@@ -338,8 +422,11 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
                 item["hits"] += 1
                 item["times"].append(p["sec"])
             else:
-                item.update({"hits": 1, "times": [p["sec"]], "ratio": c["ratio"],
-                             "why": c.get("why"), "kind": "latin", "applicable": True})
+                cands[key] = {"surface": c["surface"], "canonical": c["canonical"],
+                              "hits": 1, "times": [p["sec"]], "ratio": c["ratio"],
+                              "why": c.get("why"), "kind": "latin",
+                              # near 只报不改：形状和读音都不像，只有长度和两处差异撑着
+                              "applicable": c.get("why") != "near"}
 
     # 中文：从逐字差异聚合出来，和英文候选并列
     for c in cjk_candidates(pairs):

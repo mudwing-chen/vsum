@@ -169,6 +169,28 @@ check("中文两帧 -> high", ("罗大", "high") in zh, zh)
 check("中文一帧 -> medium", ("有加奖", "medium") in zh, zh)
 check("单字被丢弃", all(s != "大" for s, _ in zh), zh)
 
+# 只差标点/大小写的差异不是错字。
+# 真实跑一遍 60 秒视频时，四条候选全是这种噪音，把真候选淹了：
+# 「l。」→「l」「源sk」→「源Sk」「近,你」→「近，你」「频。」→「频」
+noise = [{"sec": 2.0, "similarity": 0.9,
+          "diffs": [("l。", "l"), ("源sk", "源Sk"), ("近,你", "近，你"), ("加奖", "嘉奖")]}]
+kept = ocr.cjk_candidates(noise)
+check("标点/大小写差异被过滤", [c["surface"] for c in kept] == ["加奖"], kept)
+
+# 同长度的近邻拉丁词：Wipe / Vibe 这种形状(0.5)、读音(Soundex W100/V100)都够不到的
+near = ocr.near_tokens("话题 # 站热门 Vibe 知识大赏", {"wipe": 1})
+check("近邻拉丁词进候选", bool(near) and near[0]["surface"] == "wipe", near)
+check("近邻候选标成 near", near and near[0]["why"] == "near", near)
+check("近邻候选只报不改", ocr.near_tokens("Vibe", {"vibe": 1}) == [], "转写里已有的拼写不该报")
+
+# 一帧里同时有标题卡和字幕时，逐行比也能把字幕那一行配上
+segs_line = [{"start": 0.0, "end": 2.0, "text": "最近,你应该很难躲开这种视频。"}]
+seg_line, r_line = ocr.best_match("# 站热门 知识大赏 Vibe\n最近，你应该很难躲开这种视频", segs_line, 1.0)
+check("整帧不成句时逐行也能配上", seg_line is not None and r_line > 0.8, r_line)
+check("逐行匹配取最像的那一行",
+      ocr.best_line("标题卡\n最近，你应该很难躲开这种视频", "最近,你应该很难躲开这种视频")
+      == "最近，你应该很难躲开这种视频")
+
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))
     sys.exit(1)

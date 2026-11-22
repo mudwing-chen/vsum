@@ -36,6 +36,30 @@ Summarizers give you a paragraph you can't check. vsum gives you the **material 
 > The summary is a **draft**. `transcript.md` is the source of truth. That's a design choice:
 > a machine can guarantee "this sentence exists at 00:41", not "this is the right takeaway".
 
+## It catches its own mistakes
+
+Proper nouns are where speech models fail, and the correct spelling is usually right there on
+screen. `vsum ocr` samples frames and reads them (real run, 60-second video):
+
+```bash
+$ vsum ocr out/
+12 frames sampled, 12 frame/transcript pairs, 2 suggested fixes -> out/ocr.json
+```
+
+| In the transcript | On screen | Similarity | Seen |
+|---|---|---|---|
+| seadance | **Seedance** | 0.88 | 5 frames → auto-fixed |
+| wipe | **Vibe** | 0.50 | 1 frame → reported only |
+
+```bash
+$ vsum fix out/ --from-ocr out/ocr.json --apply
+1 file, 1 hit (high 1 / medium 0), 1 written
+```
+
+`SeaDance → Seedance` got fixed; `Wipe → Vibe` appeared in a single frame, so it's reported but
+not applied. This is not the same as a custom dictionary: **you don't have to know the correct
+spelling in advance.**
+
 ## What the output looks like
 
 Real output from a 4-minute Chinese AI-news video is in [`docs/example/`](docs/example/)
