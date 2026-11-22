@@ -229,6 +229,15 @@ vsum falls back to extractive and tells you why.
   2.5% of characters came out traditional in a 13:47 test clip. Fixed before writing to disk
   using a per-character Unihan mapping (`vsum/data/t2s.json`, MIT-clean, no GPL dependency).
 
+## What this is not
+
+- **Not a meeting-notes tool.** There is no speaker diarization. For multi-speaker meetings use
+  Feishu Minutes or Tongyi Tingwu — third-party tests put them at 94% / 93%, and vsum cannot even
+  mark *who* is talking.
+- **Not a hosted service.** No account, no upload, no quota — which also means no web UI.
+- **Not a promise that the summary is right.** Only that every bullet points back to a specific
+  second of the transcript.
+
 ## Platform support
 
 | Platform | Status |
