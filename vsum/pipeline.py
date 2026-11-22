@@ -157,7 +157,7 @@ def load_corrections(out_dir):
 def run(src, out_dir, model="small", language="zh", pack=None,
         clean_mode=False, words=None, browser=None, fetch_only=False,
         headless=None, profile=None, summary_mode="extractive",
-        llm_url=None, llm_model=None, force=False, context=True):
+        llm_url=None, llm_model=None, force=False, context=True, hints=True):
     t0 = time.time()
     source_url = None
     title = None
@@ -264,6 +264,11 @@ def run(src, out_dir, model="small", language="zh", pack=None,
     manifest_mod.write(man, os.path.join(out_dir, "manifest.json"))
     print("完成：%d 段，%d 字，摘要 %d 条 -> %s"
           % (len(segments), counts["chars"], bullets, os.path.abspath(out_dir)))
+    if hints:
+        # 新人的下一步几乎总是「那句在第几秒」和「把那一段剪出来」，
+        # 直接给可复制的命令，别让他回头翻 README。
+        print("  想知道某句在第几秒：vsum find %s 关键词" % out_dir)
+        print("  想把那一段剪出来：  vsum clip %s 00:41 -o clip.mp4" % out_dir)
     return res
 
 

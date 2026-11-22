@@ -90,7 +90,8 @@ def run(list_path, out_dir, model="small", language="zh", pack=None,
             continue
         try:
             pipeline.run(url, target, model, language, pack, browser=browser,
-                         headless=headless, profile=profile, force=force, context=context)
+                         headless=headless, profile=profile, force=force, context=context,
+                         hints=False)   # 批量跑时每条都打一遍「下一步」是噪音
             status, error = "ok", None
         except KeyboardInterrupt:
             items.append({"url": url, "dir": name, "status": "interrupted"})

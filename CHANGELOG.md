@@ -32,6 +32,8 @@
   `llama-server` 二进制缺失时，会直接写
   `HTTP 500 {"error":{"message":"error starting llama-server: llama-server binary not found"...`，
   而不是让人对着「已退回抽取式」猜。
+- **跑完给下一步**：第一次跑完只报「完成：N 段，N 字」，新人不知道还能搜、还能剪。现在直接
+  打印两行可复制的 `vsum find` / `vsum clip`；`batch` 里关掉（每条都打一遍是噪音）。
 - **`--help` 里每个参数都有说明了**：`-o` `--lang` `--pack` `--clean` `--words` `--summary`
   `--llm-model`、`find --limit`、`audit` 的四个参数、`mine` 的四个参数、`fix --terms`
   之前要么没说明，要么只有占位符 `--limit LIMIT`。
