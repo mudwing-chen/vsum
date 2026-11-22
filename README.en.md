@@ -250,12 +250,11 @@ in some regions.
 
 ```bash
 python -m py_compile vsum/*.py tests/*.py
-for t in terms exports eval cli loop transcribe fetch hardware holdout browser summary p2 batch lookup ocr llm; do
-  python "tests/test_$t.py" || exit 1
-done
+for t in tests/test_*.py; do python "$t" || exit 1; done
 ```
 
-The tests need no third-party packages (no model download, no browser). CI runs on Ubuntu and Windows.
+The tests need no third-party packages (no model download, no browser). CI runs the same glob on
+Ubuntu and Windows, so adding a test file needs no workflow edit.
 
 ## License
 

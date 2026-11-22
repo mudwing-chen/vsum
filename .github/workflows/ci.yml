@@ -21,24 +21,14 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install package (no ML deps)
         run: pip install -e . --no-deps
+      # 跑 tests/ 下所有 test_*.py，不维护清单：以前清单硬编码三份（两个 job + README），
+      # 新加测试时漏过好几次（lookup / ocr / llm 都漏过）。
       - name: Unit tests (no model download)
         run: |
-          python tests/test_terms.py
-          python tests/test_exports.py
-          python tests/test_eval.py
-          python tests/test_cli.py
-          python tests/test_loop.py
-          python tests/test_transcribe.py
-          python tests/test_fetch.py
-          python tests/test_hardware.py
-          python tests/test_holdout.py
-          python tests/test_browser.py
-          python tests/test_summary.py
-          python tests/test_p2.py
-          python tests/test_batch.py
-          python tests/test_lookup.py
-          python tests/test_ocr.py
-          python tests/test_llm.py
+          for t in tests/test_*.py; do
+            echo "== $t"
+            python "$t"
+          done
 
   windows:
     runs-on: windows-latest
@@ -49,21 +39,13 @@ jobs:
           python-version: "3.12"
       - name: Install package (no ML deps)
         run: pip install -e . --no-deps
+      # 必须显式用 bash：pwsh 的多行脚本只在**最后一条命令**后检查 $LASTEXITCODE，
+      # 中间某个测试挂了 job 照样是绿的（test_browser 那条错断言就是这么一直没被发现）。
+      # GitHub 的 bash shell 模板带 -e -o pipefail，第一条失败就退出。
       - name: Unit tests (no model download, no browser)
+        shell: bash
         run: |
-          python tests/test_terms.py
-          python tests/test_exports.py
-          python tests/test_eval.py
-          python tests/test_cli.py
-          python tests/test_loop.py
-          python tests/test_transcribe.py
-          python tests/test_fetch.py
-          python tests/test_hardware.py
-          python tests/test_holdout.py
-          python tests/test_browser.py
-          python tests/test_summary.py
-          python tests/test_p2.py
-          python tests/test_batch.py
-          python tests/test_lookup.py
-          python tests/test_ocr.py
-          python tests/test_llm.py
+          for t in tests/test_*.py; do
+            echo "== $t"
+            python "$t"
+          done

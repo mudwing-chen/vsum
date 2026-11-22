@@ -316,12 +316,11 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 
 ```bash
 python -m py_compile vsum/*.py tests/*.py
-for t in terms exports eval cli loop transcribe fetch hardware holdout browser summary p2 batch lookup ocr llm; do
-  python "tests/test_$t.py" || exit 1
-done
+for t in tests/test_*.py; do python "$t" || exit 1; done
 ```
 
 测试零第三方依赖（不下载模型、不起浏览器），CI 在 ubuntu 和 windows 各跑一遍。
+清单是 glob 出来的，加测试文件不用再改 CI。
 
 ## License
 

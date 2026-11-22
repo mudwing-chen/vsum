@@ -49,9 +49,13 @@
   因为喂的是数组所以没事——也就是说这个 bug 只在 bench 上，而 bench 正是「想知道该用什么
   配置」的人第一个会跑的命令。现在 bench 自己用 ffmpeg 转 16k 单声道 wav、按数组喂模型，
   和主路径一致。
-- **`tests/test_browser.py` 在任何 Windows 上都是红的**：两处断言拿 `expanduser()` 的原始串
-  去比 `abspath()` 的返回值，`C:\a/b` 与 `C:\a\b` 必然不等。CI 的 windows job 一直在跑这个
-  文件。现在期望值也走 `abspath`，两端一致。
+- **`tests/test_browser.py` 在任何 Windows 上都是红的，而 CI 一直是绿的**：两处断言拿
+  `expanduser()` 的原始串去比 `abspath()` 的返回值，`C:\a/b` 与 `C:\a\b` 必然不等。
+  CI 没发现是因为 windows job 用 pwsh 跑多行脚本——它只在**最后一条命令**后检查
+  `$LASTEXITCODE`，中间挂掉不会让 job 变红。现在 windows job 显式 `shell: bash`
+  （带 `-e -o pipefail`），期望值也走 `abspath`，两端一致。
+- **CI 的测试清单不再手写**：之前同一份清单硬编码在两个 job 里、README 里还有第三份，
+  新加测试漏过 `lookup` / `ocr` / `llm` 三次。现在统一 `for t in tests/test_*.py`。
 - README 的「环境变量」被之前的编辑搞成了两张表：`WHISPER_PROMPT` 和 `VSUM_BROWSER_PROFILE`
   各出现两次，`WHISPER_COND` / `HF_HOME` 掉在第二张里。合并成一张。
 - README「开发」段的测试清单漏了 `ocr` 和 `llm`（CI 是跑全的，照文档跑会少两个）。
