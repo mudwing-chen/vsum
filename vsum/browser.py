@@ -92,9 +92,12 @@ def candidates(system=None, env=None):
 
 def find_binary(kind, system=None, env=None):
     """找某个浏览器家族的可执行文件；找不到返回 None（交给 selenium-manager）。"""
+    system = system or platform.system()
     for k, path in candidates(system, env):
         if k == kind and path and os.path.exists(path):
             return path
+    if system != platform.system():
+        return None
     names = (("chrome", "google-chrome", "chromium") if kind == "chrome"
              else ("msedge", "microsoft-edge"))
     for name in names:

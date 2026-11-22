@@ -87,6 +87,15 @@ doc = run("doctor")
 check("doctor 不崩", doc.returncode in (0, 3), (doc.returncode, doc.stderr))
 check("doctor 有清单", "ffmpeg" in doc.stdout, doc.stdout[:80])
 
+# Windows 控制台默认 cp936/cp1252：命令不能因为打印中文崩掉，管道输出要统一 UTF-8
+loop_dir = os.path.join(HERE, "fixtures", "loop")
+cp = subprocess.run([sys.executable, "-m", "vsum", "fix", loop_dir], cwd=ROOT,
+                    capture_output=True,
+                    env=dict(os.environ, PYTHONIOENCODING="cp1252"))
+cp_out = cp.stdout.decode("utf-8", "replace")
+check("cp1252 环境不崩", cp.returncode == 0, (cp.returncode, cp_out[-80:]))
+check("管道输出 UTF-8 中文可读", "命中" in cp_out, cp_out[-80:])
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)

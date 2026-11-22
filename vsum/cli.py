@@ -164,7 +164,22 @@ SUB = {
 }
 
 
+def _utf8_on_pipe():
+    """输出被重定向或接管道时统一 UTF-8。
+
+    Windows 控制台默认 cp936/cp1252，重定向时 Python 也按本地编码写，中文会变成
+    \\uXXXX 转义，机读和日志都不可用；终端里保持本地编码不动。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if not stream.isatty():
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv=None):
+    _utf8_on_pipe()
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if argv and argv[0] in SUB:
