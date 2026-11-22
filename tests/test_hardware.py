@@ -62,6 +62,10 @@ from vsum.pipeline import InputError  # noqa: E402
 
 eq(bench.candidates("cuda"), ["float16", "int8_float16", "int8"], "cuda candidates")
 eq(bench.candidates("cpu"), ["int8", "int8_float32"], "cpu candidates")
+# Pascal 上 float16 是模拟的，bench 必须以实际会用的 compute_type 先跑
+eq(bench.candidates("cuda", "int8_float32"),
+   ["int8_float32", "float16", "int8_float16", "int8"], "preferred first (cuda)")
+eq(bench.candidates("cpu", "int8"), ["int8", "int8_float32"], "preferred first (cpu)")
 
 try:
     bench.run(audio=None, synth=False)

@@ -39,22 +39,56 @@ def synth_audio(seconds=30, text=None, out_path=None):
     return path
 
 
-def candidates(device):
-    return ["float16", "int8_float16", "int8"] if device == "cuda" else ["int8", "int8_float32"]
+def candidates(device, preferred=None):
+    """要试的 compute_type，本机实际会用的那个排第一。
+
+    Pascal（P106 这类）上 float16 是软件模拟，先试它会白等好几分钟；
+    preferred 给的是 hardware.resolve() 的选择，所以默认顺序 = 真实默认路径。
+    """
+    order = ["float16", "int8_float16", "int8"] if device == "cuda" else ["int8", "int8_float32"]
+    if not preferred:
+        return order
+    return [preferred] + [c for c in order if c != preferred]
+
+
+def to_wav(src, workdir):
+    """转成 16k 单声道 wav，后面用数组喂模型。
+
+    直接把文件路径交给 faster-whisper，它会走 av 解码；而 av 16+ 去掉了
+    ``metadata_errors`` 这个关键字参数，faster_whisper 1.2.x 仍在传，于是
+    ``open() got an unexpected keyword argument`` 直接炸。vsum 主路径本来就
+    绕开 av（见 transcribe.load_audio），bench 必须走同一条路。
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise BenchError("找不到 ffmpeg，没法把音频转成 16k 单声道 wav")
+    wav = os.path.join(workdir, "bench-16k.wav")
+    proc = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", src, "-vn",
+                           "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav],
+                          capture_output=True, text=True)
+    if proc.returncode != 0 or not os.path.exists(wav):
+        raise BenchError("ffmpeg 抽音频失败：%s" % (proc.stderr.strip()[:300] or "exit %d" % proc.returncode))
+    return wav
 
 
 def run_one(audio, model_name, device, compute, language="zh"):
-    from faster_whisper import WhisperModel
+    from .transcribe import get_model, load_audio
 
+    payload = load_audio(audio)
+    if payload is None:
+        payload = audio
     loaded = time.time()
     try:
-        model = WhisperModel(model_name, device=device, compute_type=compute)
+        # 走 get_model 而不是直接 WhisperModel：它负责把 nvidia-* 轮子里的
+        # cublas/cudnn 挂进 DLL 搜索路径，bench 自己 new 会报 cublas64_12.dll 找不到。
+        # cache=False：每换一个 compute_type 都要重新量加载耗时。
+        model, _ = get_model(model_name, device, compute, cache=False)
     except Exception as exc:
         return {"compute_type": compute, "ok": False, "error": str(exc)}
     load_s = time.time() - loaded
     started = time.time()
     try:
-        segs, info = model.transcribe(audio, language=language, vad_filter=True, beam_size=5,
+        segs, info = model.transcribe(payload, language=language, vad_filter=True, beam_size=5,
                                       condition_on_previous_text=False,
                                       temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
         segs = list(segs)
@@ -79,8 +113,17 @@ def run(audio=None, synth=False, model_name="tiny", out_dir=None, computes=None,
     hw = hardware.resolve()
     if synth:
         audio = synth_audio()
-    picks = [c.strip() for c in computes.split(",")] if computes else candidates(hw["device"])
-    rows = [run_one(audio, model_name, hw["device"], c, language) for c in picks]
+    made_tmp = out_dir is None
+    workdir = out_dir or tempfile.mkdtemp(prefix="vsum-bench-")
+    os.makedirs(workdir, exist_ok=True)
+    try:
+        wav = to_wav(audio, workdir)
+        picks = ([c.strip() for c in computes.split(",")] if computes
+                 else candidates(hw["device"], hw["compute_type"]))
+        rows = [run_one(wav, model_name, hw["device"], c, language) for c in picks]
+    finally:
+        if made_tmp:
+            shutil.rmtree(workdir, ignore_errors=True)
     result = {"schema": 1, "model": model_name, "device": hw["device"],
               "gpu": hw["name"], "compute_choice": hw["compute_type"],
               "reason": hw["reason"], "audio": audio, "runs": rows}
