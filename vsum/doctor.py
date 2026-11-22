@@ -7,6 +7,9 @@ import shutil
 import subprocess
 import sys
 
+from . import hardware
+from .transcribe import CACHE_HINTS, cache_state, hf_root
+
 
 def ffmpeg_hint(system=None):
     """各平台的 ffmpeg 安装命令；Windows 不再给 apt 建议。"""
@@ -84,8 +87,6 @@ def run(model="small"):
     except Exception:
         add("av", False, "not found", "pip install 'av>=11'（随 faster-whisper 一起装）")
 
-    from . import hardware
-
     hw = hardware.resolve()
     add("device", True, "%s / %s" % (hw["device"], hw["compute_type"]),
         "WHISPER_DEVICE / WHISPER_COMPUTE 可覆盖；实测 RTF 用 vsum bench")
@@ -107,6 +108,15 @@ def run(model="small"):
     else:
         rows.append(("browser", "extra", detail,
                      "链接抓取不可用（本地文件不受影响）：pip install 'vsum[browser]' 并装 Chrome 或 Edge"))
+
+    # 缓存目录不可用是「模型明明下过却加载不了」的头号原因（换盘后软链断掉最常见），
+    # 单独一行，别让它伪装成「未缓存」。
+    root = hf_root()
+    state = cache_state(root)
+    if state == "ok":
+        rows.append(("hf-cache", "ok", root, ""))
+    else:
+        rows.append(("hf-cache", "MISSING", root, CACHE_HINTS.get(state, "")))
 
     cached = _model_cached(model)
     add("model:%s" % model, bool(cached), cached or "未缓存",

@@ -216,6 +216,67 @@ def get_model(model_name, device, compute, cache=True):
 
 CUDA_HINTS = ("cublas", "cudnn", "cuda", "no kernel image", "device is detected")
 
+CACHE_HINTS = {
+    "broken": "缓存目录的软链指向了不存在的目录（换盘后最常见）："
+              "把 HF_HOME 指到可写目录，如 set HF_HOME=D:\\hf / export HF_HOME=~/hf",
+    "denied": "缓存目录写不进去：把 HF_HOME 指到可写目录，"
+              "如 set HF_HOME=D:\\hf / export HF_HOME=~/hf",
+    "absent": "缓存目录还没建，上级目录不可写：把 HF_HOME 指到可写目录",
+}
+
+
+def hf_root():
+    """huggingface_hub 实际会用的缓存根目录，优先级与它自己一致。"""
+    if os.environ.get("HF_HUB_CACHE"):
+        return os.environ["HF_HUB_CACHE"]
+    if os.environ.get("HF_HOME"):
+        return os.path.join(os.environ["HF_HOME"], "hub")
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return os.path.join(xdg, "huggingface", "hub")
+    return os.path.expanduser("~/.cache/huggingface/hub")
+
+
+def cache_state(path=None):
+    """缓存目录能不能用：ok / denied / broken / absent。
+
+    只读判断，绝不在这里建文件：junction 指向已移除的磁盘时，
+    在它下面建文件会卡到 I/O 超时（实测能把 doctor 挂死）。
+    """
+    path = hf_root() if path is None else path
+    if os.path.isdir(path):
+        return "ok" if os.access(path, os.W_OK) else "denied"
+    if os.path.lexists(path):
+        # 目录项在、但解析不到目录：软链/junction 指的地方没了
+        return "broken"
+    probe = path
+    while probe and not os.path.isdir(probe):
+        if os.path.lexists(probe):
+            return "broken"
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return "absent"
+        probe = parent
+    return "ok" if os.access(probe, os.W_OK) else "denied"
+
+
+def cache_hint(exc):
+    """模型加载失败时的缓存提示，没有这类迹象就返回空串。
+
+    换盘/搬家后 ~/.cache/huggingface 指向已移除磁盘是最常见的一种：原始报错可能
+    是 [WinError 5]，也可能是下载器内部的 TypeError，总之都看不出跟缓存有关。
+    """
+    text = str(exc).lower()
+    looks_like_cache = isinstance(exc, PermissionError) or any(
+        k in text for k in ("permission", "access is denied", "拒绝访问", "winerror 5",
+                            "read-only file system", "metadata_errors"))
+    if not looks_like_cache:
+        return ""
+    state = cache_state()
+    if state == "ok":
+        return ""
+    return "\n  %s\n  当前缓存目录：%s" % (CACHE_HINTS[state], hf_root())
+
 
 def _looks_like_cuda_problem(exc):
     text = str(exc).lower()
@@ -244,7 +305,8 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
             kwargs["condition_on_previous_text"] = recorded["condition_on_previous_text"]
             model, cached = get_model(model_name, device, compute)
         else:
-            raise DependencyError("模型加载失败（%s / %s / %s）：%s" % (model_name, device, compute, exc))
+            raise DependencyError("模型加载失败（%s / %s / %s）：%s%s" % (
+                model_name, device, compute, exc, cache_hint(exc)))
     if cached:
         print("模型已在内存里（%s / %s），跳过加载" % (model_name, device))
     started = time.time()
