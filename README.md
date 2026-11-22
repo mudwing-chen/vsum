@@ -24,6 +24,8 @@ MIT · Python 3.9+ · macOS / Linux / Windows
 前置：Python 3.9+（macOS arm64 建议用 3.12），`ffmpeg` 在 PATH 上。
 
 ```bash
+git clone https://github.com/mudwing-chen/vsum.git
+cd vsum
 pip install .                  # 本地转写、摘要、导出
 pip install '.[browser,yt]'    # 额外：抓链接（selenium + yt-dlp）
 vsum doctor
