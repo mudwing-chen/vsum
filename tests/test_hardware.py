@@ -77,6 +77,9 @@ with contextlib.redirect_stdout(buf):
 out = buf.getvalue()
 eq(any(l.startswith("browser") for l in out.splitlines()), True, "doctor browser row")
 eq(isinstance(code, int), True, "doctor return code is int")
+eq(doctor.ffmpeg_hint("win32").startswith("winget"), True, "Windows 不给 apt 建议")
+eq(doctor.ffmpeg_hint("darwin").startswith("brew"), True, "macOS 给 brew")
+eq(doctor.ffmpeg_hint("linux").startswith("apt"), True, "Linux 给 apt")
 
 if FAILS:
     print("FAIL")
