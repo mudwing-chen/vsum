@@ -40,8 +40,8 @@ def _selenium():
         from selenium import webdriver  # noqa: F401
     except ImportError as exc:  # pragma: no cover - 取决于环境
         raise BrowserError(
-            "没有 selenium：pip install 'vsum[browser] @ git+https://github.com/mudwing-chen/vsum'"
-            "（或 pip install selenium）。注意 PyPI 上的 vsum 不是这个项目，别裸装 vsum[browser]。"
+            "没有 selenium：pip install 'vsum-cli[browser] @ git+https://github.com/mudwing-chen/vsum'"
+            "（或 pip install selenium）。注意发行名是 vsum-cli，别裸装 vsum[browser]。"
         ) from exc
     from selenium import webdriver
     return webdriver

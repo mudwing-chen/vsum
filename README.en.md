@@ -17,8 +17,8 @@ vsum clip out/ 00:41 -o clip.mp4
 ```
 
 > ⚠️ **Do not `pip install vsum`.** That name on PyPI belongs to a different, unrelated
-> video-summary project. This repo is not on PyPI yet (we plan to publish as `vsum-cli`;
-> the import name and the `vsum` command stay the same). Use the git install above.
+> video-summary project. This project publishes as `vsum-cli` (the `vsum` command stays
+> the same) and is not on PyPI yet. Use the git install above.
 
 ---
 
@@ -271,7 +271,7 @@ vsum falls back to extractive and tells you why.
 | Windows 11 | verified end-to-end: P106 GPU, Douyin short-link → detail API → download → transcribe, OCR, find, clip |
 
 Link fetching: Douyin (China) goes through the browser's own page API; Bilibili / YouTube use
-yt-dlp (`pip install 'vsum[yt] @ git+https://github.com/mudwing-chen/vsum'`; the `vsum` on PyPI
+yt-dlp (`pip install 'vsum-cli[yt] @ git+https://github.com/mudwing-chen/vsum'`; the `vsum` on PyPI
 is a different project, so always qualify the extra with the git URL). Douyin requires a one-time
 `vsum login douyin` QR scan
 in some regions.

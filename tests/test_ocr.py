@@ -136,7 +136,7 @@ try:
         ocr._engine()
         check("缺引擎要抛 DependencyError", False)
     except ocr.DependencyError as exc:
-        check("缺引擎要抛 DependencyError", "vsum[ocr]" in str(exc), str(exc))
+        check("缺引擎要抛 DependencyError", "vsum-cli[ocr]" in str(exc), str(exc))
     except RuntimeError as exc:
         check("缺引擎要抛 DependencyError", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
 finally:
@@ -147,7 +147,7 @@ _engine = ocr._engine
 _frames = ocr.extract_frames
 ocr.extract_frames = lambda video, times, out, quality=3: [(t, "fake.jpg") for t in times]
 ocr._engine = lambda: (_ for _ in ()).throw(
-    ocr.DependencyError("没有 OCR 引擎：pip install 'vsum[ocr]'"))
+    ocr.DependencyError("没有 OCR 引擎：pip install 'vsum-cli[ocr]'"))
 try:
     d = _mkdtemp()
     with open(os.path.join(d, "segments.json"), "w", encoding="utf-8") as fh:
@@ -160,7 +160,7 @@ try:
             ocr.run(d, limit=1)
         check("缺引擎要抛错", False)
     except ocr.DependencyError as exc:
-        check("缺引擎报错带安装提示", "vsum[ocr]" in str(exc), str(exc))
+        check("缺引擎报错带安装提示", "vsum-cli[ocr]" in str(exc), str(exc))
     except RuntimeError as exc:
         check("缺引擎报错带安装提示", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
 

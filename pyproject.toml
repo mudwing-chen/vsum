@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vsum"
+name = "vsum-cli"
 version = "0.6.1"
 description = "Local video/audio → a transcript you can cite by the second, with provenance-checked summaries"
 readme = "README.md"
@@ -31,7 +31,7 @@ classifiers = [
 ]
 # 不锁 av：vsum 自己用 ffmpeg 抽 16k wav、用标准库 wave 读成数组喂给模型，
 # 从不走 faster-whisper 的 decode_audio，所以 av 的版本变化影响不到转写。
-# 老版本这里钉的是 av>=11,<14，害得用户装 vsum 时被降级 av 甚至弄坏别的项目。
+# 老版本这里钉的是 av>=11,<14，害得用户装 vsum-cli 时被降级 av 甚至弄坏别的项目。
 #
 # numpy 是直接 import 的（transcribe 用它接 ndarray），所以显式声明；av 只在
 # probe_duration 里作可选回退（`import av` 包在 try 里），靠 faster-whisper 带进来即可。
@@ -48,7 +48,7 @@ browser = ["selenium>=4.10"]
 yt = ["yt-dlp>=2024.1"]
 # 抽帧 OCR：用画面上的拼写核对专名（onnxruntime 已由 faster-whisper 带来）
 ocr = ["rapidocr-onnxruntime>=1.3"]
-# 一次装齐可选依赖：pip install "vsum[all]"
+# 一次装齐可选依赖：pip install "vsum-cli[all]"
 all = ["selenium>=4.10", "yt-dlp>=2024.1", "rapidocr-onnxruntime>=1.3"]
 
 [project.scripts]

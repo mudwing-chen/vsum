@@ -20,10 +20,10 @@ vsum doctor         # MISSING 才必须装；warn / extra 是能降级跑的
 ```
 
 PyPI 上的 `vsum` **是另一个同名项目**（Baire 的 video-summary），装错会得到完全不同的 CLI。
-本项目的安装只有两条：`pip install -e .`，或
-`uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"`。
-`vsum doctor` 里没有 `model_cap` / `plan` 行、或 `dist` 行不是 `ok`，就是装错了：改用
-`python3 -m vsum`，并提醒用户「改名 `vsum-cli` 发到 PyPI 之后再 `pip install`」。
+本项目的发布名是 `vsum-cli`，命令仍是 `vsum`；还没发到 PyPI，安装只有两条：
+`pip install -e .`，或 `uv tool install "vsum-cli @ git+https://github.com/mudwing-chen/vsum"`。
+`vsum doctor` 里没有 `model_cap` / `plan` 行、或 `dist` 行不是 `ok`（正确时显示 `mudwing-chen/vsum（vsum-cli）`），
+就是装错了：改用 `python3 -m vsum`，并提醒用户卸掉装错的那个包。
 
 同名 skill 也会撞：本机若还装着别的视频总结 skill（video-summary 之类），触发词都是
 「抖音/B站/YouTube + 转写/总结」。一件事只用一个 skill——调 `vsum` 命令的活归这里；

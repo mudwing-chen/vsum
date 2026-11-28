@@ -2,6 +2,14 @@
 
 按「会改变产物」和「只是更方便」两类记。版本号遵循语义化版本。
 
+## 未发布 — 发行名改为 vsum-cli
+
+- `pyproject.toml` 的 `name` 改成 `vsum-cli`，命令仍是 `vsum`。PyPI 上的 `vsum` 是另一个项目，
+  撞名装错会得到完全不同的 CLI。所有安装提示（`doctor` / `browser` / `ocr`、README、SKILL）同步改成
+  `vsum-cli[extra] @ git+…` 的写法。
+- `vsum doctor` 的 `dist` 行先查 `vsum-cli`、再查旧名 `vsum`；装成 PyPI 上那个 `vsum` 会直接报
+  「装的是 PyPI 上的另一个 vsum」并给卸装命令。装对时显示 `mudwing-chen/vsum（vsum-cli）`。
+
 ## 未发布 — 审计修复
 
 一轮外部审计把「按文档用」和「按默认用法用」的差距摊开了：默认路径（`vsum x.mp4 -o out`）

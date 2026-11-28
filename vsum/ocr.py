@@ -10,7 +10,7 @@ medium、CPU 和 GPU，`Cloud`/`GPD` 的错法完全一致）。而正确写法�
    - 拉丁词：画面上出现一个「转写里从没出现过的拼写」，且与某个转写词很像 → 候选修正
    - 中文：不自动猜，只把「这一段画面上写的是什么」列出来给人看
 
-OCR 引擎是可选依赖（`pip install 'vsum[ocr] @ git+https://github.com/mudwing-chen/vsum'`），
+OCR 引擎是可选依赖（`pip install 'vsum-cli[ocr] @ git+https://github.com/mudwing-chen/vsum'`），
 没装就明确报错，不影响其他功能。
 """
 import argparse
@@ -335,7 +335,7 @@ def _engine():
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as exc:
         raise DependencyError(
-            "没有 OCR 引擎：pip install 'vsum[ocr] @ git+https://github.com/"
+            "没有 OCR 引擎：pip install 'vsum-cli[ocr] @ git+https://github.com/"
             "mudwing-chen/vsum'（rapidocr-onnxruntime）。注意 PyPI 上的 vsum "
             "是另一个项目。"
             "装不上也没关系，vsum 的其他功能不依赖它。原始错误：%s" % exc)

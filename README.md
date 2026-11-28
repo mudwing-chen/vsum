@@ -17,7 +17,7 @@ vsum clip out/ 03:41 -o clip.mp4
 ```
 
 > ⚠️ **`pip install vsum` 装的不是这个项目。** PyPI 上 `vsum` 已被另一个同名的视频总结工具占用；
-> 本仓库还没上 PyPI（计划改名 `vsum-cli` 后发布）。在那之前请用上面的 git 安装。
+> 本项目的发布名是 `vsum-cli`（命令仍是 `vsum`），还没发到 PyPI，在那之前请用上面的 git 安装。
 
 ---
 
@@ -270,7 +270,7 @@ LLM 不可用时自动退回抽取式，并把原因一起记进 `warnings`—�
 所以 vsum 的做法是把画面取回来对照：
 
 ```bash
-pip install 'vsum[ocr] @ git+https://github.com/mudwing-chen/vsum'   # 可选：抽帧 OCR（rapidocr + onnxruntime）
+pip install 'vsum-cli[ocr] @ git+https://github.com/mudwing-chen/vsum'   # 可选：抽帧 OCR（rapidocr + onnxruntime）
 vsum ocr out/                    # 抽最值得看的帧，OCR，和转写并排列出来
 vsum ocr out/ --every 30         # 也可以按间隔扫一遍，找标题卡/信息卡
 ```
@@ -323,8 +323,8 @@ vsum mine out/                   # 挖词表外的变体候选（需人工确认
 | Windows | P106 + Win11 实测：转写 / 导出 / find / clip 通过；抖音短链 → detail 接口 → 下载 → 转写 全链路通过（Edge 158） |
 
 链接抓取：抖音走 Chrome / Edge 的页面接口（先 `vsum login douyin` 扫码一次），
-B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt] @ git+https://github.com/mudwing-chen/vsum'`）。
-注意 PyPI 上的 `vsum` 是另一个项目：装 extras 要用 `包名[extra] @ git+…` 的写法，别裸装 `vsum[yt]`。
+B站 / YouTube 走 yt-dlp（`pip install 'vsum-cli[yt] @ git+https://github.com/mudwing-chen/vsum'`）。
+注意发行名是 `vsum-cli`：装 extras 要用 `包名[extra] @ git+…` 的写法，别裸装 `vsum[yt]`（那是别人的项目）。
 
 ## 已知限制
 
