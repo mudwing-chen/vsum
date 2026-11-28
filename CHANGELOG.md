@@ -201,6 +201,27 @@
   `condition_on_previous_text` 被强制关掉、`--batch-size 1` 那次是开的，两者产物本来就不同，
   按实际跑成的 batch 重算反而会让「同一条命令」每次 fallback 之后都重转一遍。
 
+### 第五轮复查（手册）
+
+`SKILL.md` 是给 agent 的执行手册，这轮按「agent 真会怎么用它」重收了一遍：从 11 KB 压到 8 KB，
+参数表、环境变量、产物清单、退出码表下沉到 `references/cli.md`，正文只留「默认值 + 什么时候改」。
+
+- **`vsum login douyin` 标成人工步骤**：它会开一个可见的浏览器窗口等扫码，agent 跑到这里必须
+  停下来请用户本人扫；扫码失败/风控就改用本地文件，不重试。以前手册把它当普通命令写在主路径里。
+- **补产物落盘约定**：10 分钟视频带 `video.mp4` + `audio.wav` 是 200 MB 级，`batch --jobs 2`
+  可以到几个 G。现在写明默认落 `out/<短名>/`、别放系统盘或用户主目录、开跑前看 `doctor` 的
+  `disk` 行、转写完成后 `video.mp4` / `audio.wav` 可删而 `segments.json` 留着就能复用。
+- **开工检查承认撞名**：PyPI 上的 `vsum` 是另一个同名项目（Baire 的 video-summary），装错会得到
+  完全不同的 CLI；`doctor` 里没有 `model_cap` / `plan` 行就是装错了。同时写明「等改名 `vsum-cli`
+  发到 PyPI」的提醒，以及和已装 video-summary 类 skill 的分工（一件事只用一个 skill）。
+- **`summary.md` 不再无条件当第一读物**：概览要点 <3 条、出现 ≤6 字的残句、`dropped` ≥2，
+  任一条成立就跳过它直接读 `transcript.md` 自己写。
+- **补两条判据**：无声/纯音乐/无人声的素材别跑（VAD 会过滤成 0 段、退出 4），以及来源自检
+  `vsum find out/ "<要点文本>"` 必须命中——要点是原文子串，命中失败说明产物或摘要有一边不对。
+- 复核并加回归：`LOW_CONF n=` 与 `result.counts.low_conf` 同源（同一批 segments、同一个
+  `export.low_conf_indexes()`），`test_transcribe` 断言 25 段时报的条数就是 `counts` 的值。
+  之前看到的「`n=10` 而 `low_conf=2`」是 0.6.1 及更早的分位口径，已在第二轮修掉。
+
 ## 0.6.1 — 2026-11-23
 
 `vsum ocr` 上一版**在真视频上基本没用**：60 秒跑下来 4 条候选全是噪音，真正该抓的错一个没抓到。

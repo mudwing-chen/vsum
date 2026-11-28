@@ -359,5 +359,37 @@ finally:
     tr.get_model, tr.hardware.resolve = _old_get, _old_hw5
 eq(_seed in tr._MODELS, False)
 
+# 终端 LOW_CONF 的 n 与 result.counts.low_conf 必须同源：25 段、值全不同 → 2 条
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import re  # noqa: E402
+from vsum import export as export_mod  # noqa: E402
+
+
+def _low_seg(i):
+    return SimpleNamespace(start=i * 4.0, end=i * 4.0 + 3.0, text="第%d段" % i,
+                           avg_logprob=-0.25 - 0.01 * i, no_speech_prob=0.01,
+                           compression_ratio=1.2, temperature=0.0, words=None)
+
+
+_low_out = tempfile.mkdtemp(prefix="vs-low-")
+_low_wav = os.path.join(_low_out, "a.wav")
+_wav(_low_wav, [0, 16384, -16384, 32767] * 4000)
+_old_get, _old_load = tr.get_model, tr.load_audio
+tr.get_model = lambda *a, **k: (_fake_model([_low_seg(i) for i in range(25)]), False)
+tr.load_audio = lambda path: None
+_buf = io.StringIO()
+try:
+    with contextlib.redirect_stdout(_buf):
+        _low_segs, _low_info, _low_rec = tr.transcribe_audio(_low_wav, _low_out, model_name="tiny")
+finally:
+    tr.get_model, tr.load_audio = _old_get, _old_load
+_log = _buf.getvalue()
+_m = re.search(r"LOW_CONF n=(\d+) times=", _log)
+eq(bool(_m), True)
+# 同一批 segments，同一个函数：终端报的条数就是 result.counts.low_conf
+eq(int(_m.group(1)), len(export_mod.low_conf_indexes(_low_segs)))
+eq(int(_m.group(1)), 2)
+
 print("OK %d checks" % checks)
 
