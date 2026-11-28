@@ -110,6 +110,32 @@ check("术语 found 0", tagg["found"] == 0, tagg)
 check("术语召回 0", tagg["recall"] == 0.0, tagg)
 check("术语 Wilson 下界 0", tagg["wilson"][0] == 0.0, tagg)
 
+# 参考目录里只有假设稿：不能拿它当参考给出 CER 0，必须报错（CLI 退出码 2）
+selfc = os.path.join(tmp, "selfc", "one")
+os.makedirs(selfc)
+write_json(os.path.join(selfc, "manifest.json"), {"input": {"path": "one.wav"}})
+write_json(os.path.join(selfc, "segments.json"), {"segments": [{"text": "这是我们自己的转写"}]})
+with open(os.path.join(selfc, "segments.txt"), "w", encoding="utf-8") as fh:
+    fh.write("这是我们自己的转写")
+try:
+    holdout.run(os.path.join(tmp, "selfc"), out=out + ".s", quiet=True)
+    check("参考不能是假设本身", False)
+except FileNotFoundError as exc:
+    check("参考不能是假设本身", "只有假设文本本身" in str(exc), exc)
+
+# 同目录里有真参考时照常评：假设稿按 stem 排除，不影响 ref.txt
+okc = os.path.join(tmp, "okc", "one")
+os.makedirs(okc)
+write_json(os.path.join(okc, "manifest.json"), {"input": {"path": "one.wav"}})
+write_json(os.path.join(okc, "segments.json"), {"segments": [{"text": "我们用cloud写代码"}]})
+with open(os.path.join(okc, "segments.txt"), "w", encoding="utf-8") as fh:
+    fh.write("我们用cloud写代码")
+with open(os.path.join(okc, "ref.txt"), "w", encoding="utf-8") as fh:
+    fh.write("我们用Claude写代码")
+ok_rc = holdout.run(os.path.join(tmp, "okc"), out=out + ".o", quiet=True)
+ok_item = load(out + ".o")["items"][0]
+check("有真参考时正常评", ok_rc == 0 and ok_item["ref"] == "ref.txt", ok_item)
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)

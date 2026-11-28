@@ -27,4 +27,6 @@ def clean_text(text):
 
 def clean_md(segments):
     cleaned = [{"start": s["start"], "end": s["end"], "text": clean_text(s["text"])} for s in segments]
-    return _export.to_md(cleaned)
+    # 清洗稿不带 YAML 头（它和逐字稿共用一套元信息，重复写只会两边打架），
+    # 也不带「术语修订」附录：这份稿子不改词表，附录只会写「无」。
+    return _export.to_md(cleaned, show_corrections=False)

@@ -20,7 +20,7 @@ import re
 import sys
 import unicodedata
 
-from . import manifest as manifest_mod
+from . import export as export_mod, manifest as manifest_mod
 
 BOOTSTRAP = 1000
 SEED = 0
@@ -61,10 +61,61 @@ def wilson(k, n, z=1.96):
 
 
 TS = re.compile(r"^\s*(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
+# VTT 的块标识（`cue-1`、`cue 1`、`cue_1`）；SRT 的序号是纯数字。两者都只是标识，
+# 只有在紧跟时间戳行时才算标识，混在正文里时是字幕原文。
+CUE_ID = re.compile(r"^cue[-_ ]?\d+$", re.I)
 
 
 def _secs(h, m, s, ms):
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+
+def _next_nonblank(lines, idx):
+    for nxt in lines[idx + 1:]:
+        if nxt.strip():
+            return nxt.strip()
+    return ""
+
+
+def _is_cue_id(line, lines, idx):
+    """标识行只在「紧跟时间戳行」时才算标识。
+
+    SRT 序号和 VTT 的 `cue-1` 都要按块判断：只按 isdigit() 丢行会把「1984」
+    「4.3」这类数字字幕整行吃掉，把 `cue-1` 粘进上一句——两种都会把 CER 算歪。
+    """
+    t = line.strip()
+    if not (t.isdigit() or CUE_ID.match(t)):
+        return False
+    return bool(TS.match(_next_nonblank(lines, idx)))
+
+
+def _parse_cues(raw):
+    """SRT/VTT -> [(start, end, text)]；数字正文保留，标识行按块丢弃。"""
+    lines = raw.splitlines()
+    cues, buf, span = [], [], None
+    for idx, line in enumerate(lines):
+        t = line.strip()
+        m = TS.match(t)
+        if m:
+            if span is not None:
+                cues.append((span[0], span[1], "".join(buf)))
+            span = (_secs(*m.groups()[:4]), _secs(*m.groups()[4:]))
+            buf = []
+            continue
+        if not t:
+            if span is not None:
+                cues.append((span[0], span[1], "".join(buf)))
+                span, buf = None, []
+            continue
+        if t.upper().startswith("WEBVTT") or _is_cue_id(line, lines, idx):
+            continue
+        if span is None:
+            # 时间戳之前的行是文件头/NOTE/垃圾，不能当字幕正文
+            continue
+        buf.append(t)
+    if span is not None:
+        cues.append((span[0], span[1], "".join(buf)))
+    return cues
 
 
 def _cues(path):
@@ -73,24 +124,7 @@ def _cues(path):
         return None
     with open(path, encoding="utf-8", errors="ignore") as fh:
         raw = fh.read()
-    cues, cur, span = [], [], None
-    for line in raw.splitlines():
-        t = line.strip()
-        if not t:
-            if cur and span:
-                cues.append((span[0], span[1], "".join(cur)))
-            cur, span = [], span
-            continue
-        m = TS.match(t)
-        if m:
-            span = (_secs(*m.groups()[:4]), _secs(*m.groups()[4:]))
-            continue
-        if t.isdigit() or t.upper() == "WEBVTT":
-            continue
-        cur.append(t)
-    if cur and span:
-        cues.append((span[0], span[1], "".join(cur)))
-    return cues or None
+    return _parse_cues(raw) or None
 
 
 def pair_cues(ref_cues, segments):
@@ -150,27 +184,51 @@ def bootstrap_cer_cues(ref_cues, segments, n=BOOTSTRAP, seed=SEED):
 def _read_ref(path):
     with open(path, encoding="utf-8", errors="ignore") as fh:
         raw = fh.read()
-    if path.endswith(".srt") or path.endswith(".vtt"):
-        lines = []
-        for line in raw.splitlines():
-            s = line.strip()
-            if not s or s.isdigit() or "-->" in s or s.upper() == "WEBVTT":
-                continue
-            lines.append(s)
-        return "".join(lines)
+    if path.endswith((".srt", ".vtt")):
+        return "".join(text for _s, _e, text in _parse_cues(raw))
     return raw
 
 
-def _pick_ref(ref_dir, input_path):
-    files = [os.path.join(ref_dir, f) for f in sorted(os.listdir(ref_dir))
-             if f.endswith((".txt", ".srt", ".vtt"))]
+def _stem(path):
+    return os.path.splitext(os.path.basename(path or ""))[0]
+
+
+def _pick_ref(ref_dir, input_path, hyp_paths=()):
+    """在 ref_dir 里挑参考文本；绝不把假设本身当参考。
+
+    单文件兜底最容易出事：目录里只有一份文本、而它正是刚导出的假设稿时，
+    CER 恒为 0，--max-cer 静默通过——这种「评测通过」比失败更危险。
+    所以候选先排除「与假设同 realpath 或同 stem」的文件，再按「与输入同名 →
+    名为 ref → 唯一候选」挑；一份都剩不下就抛 FileNotFoundError（CLI 映射成退出码 2）。
+    """
+    try:
+        names = sorted(os.listdir(ref_dir))
+    except OSError:
+        raise FileNotFoundError("参考目录打不开：%s" % ref_dir)
+    files = [os.path.join(ref_dir, f) for f in names if f.endswith((".txt", ".srt", ".vtt"))]
     if not files:
-        return None
-    stem = os.path.splitext(os.path.basename(input_path))[0]
-    for f in files:
-        if os.path.splitext(os.path.basename(f))[0] == stem:
+        raise FileNotFoundError("参考目录 %s 里没有 .txt/.srt/.vtt 参考文本" % ref_dir)
+    hyp_real = set(os.path.realpath(p) for p in hyp_paths if p)
+    hyp_stem = set(_stem(p) for p in hyp_paths if p)
+    usable = [f for f in files
+              if os.path.realpath(f) not in hyp_real and _stem(f) not in hyp_stem]
+    if not usable:
+        raise FileNotFoundError("参考目录 %s 里只有假设文本本身（%s），不能拿它当参考：CER 会恒为 0"
+                                % (ref_dir, ", ".join(os.path.basename(f) for f in files)))
+    stem = _stem(input_path)
+    if stem:
+        for f in usable:
+            if _stem(f) == stem:
+                return f
+    for f in usable:
+        if _stem(f) == "ref":
             return f
-    return files[0] if len(files) == 1 else None
+    if len(usable) == 1:
+        return usable[0]
+    raise FileNotFoundError("参考目录 %s 里有 %d 个候选（%s），没有一个跟输入 %s 同名"
+                            % (ref_dir, len(usable),
+                               ", ".join(os.path.basename(f) for f in usable),
+                               os.path.basename(input_path or "")))
 
 
 def load_hyp(path):
@@ -204,12 +262,14 @@ def run(manifest_path, ref_dir=None, min_cer=None, hyp_path=None, quiet=False):
 
     if hyp_path:
         hyp, segs = load_hyp(hyp_path)
+        hyp_file = hyp_path
         label = os.path.basename(hyp_path)
     else:
         seg_path = os.path.join(out_dir, "segments.json")
         if not os.path.exists(seg_path):
             raise FileNotFoundError("没有 segments.json：%s（或用 --hyp 指定）" % seg_path)
         hyp, segs = load_hyp(seg_path)
+        hyp_file = seg_path
         label = "segments.json"
 
     if not quiet:
@@ -217,22 +277,24 @@ def run(manifest_path, ref_dir=None, min_cer=None, hyp_path=None, quiet=False):
         if segs is not None:
             print("segments            : %d" % len(segs))
         print("chars               : %d" % len(normalize(hyp)))
-        warnings = man.get("warnings", {})
-        print("long cues           : %d" % len(warnings.get("long_cues", [])))
-        print("invalid cues        : %d" % len(warnings.get("invalid_cues", [])))
-        low = [s for s in (segs or []) if s.get("avg_logprob") is not None]
-        if low:
-            low.sort(key=lambda s: s["avg_logprob"])
-            print("low-confidence segs : %d (bottom 10%%)" % max(1, len(low) // 10))
+        # 新 manifest 的 warnings 是字符串列表，明细在 export 里；旧文件把明细塞在
+        # warnings 字典里，两种都认。
+        detail = man.get("export")
+        if not isinstance(detail, dict):
+            detail = man.get("warnings") if isinstance(man.get("warnings"), dict) else {}
+        print("long cues           : %d" % len(detail.get("long_cues") or []))
+        print("invalid cues        : %d" % len(detail.get("invalid_cues") or []))
+        if segs is not None:
+            # 和 transcript.md 里带 ⚠ 的段同一口径，别在这里另算一套分位
+            print("low-confidence segs : %d (marked ⚠ in transcript.md)"
+                  % len(export_mod.low_conf_indexes(segs)))
 
     if not ref_dir:
         if not quiet:
             print("no --ref: 只做 manifest 自洽检查，不算 CER")
         return 0
 
-    ref_path = _pick_ref(ref_dir, man.get("input", {}).get("path", ""))
-    if not ref_path:
-        raise FileNotFoundError("参考目录里没有匹配文本（文件名与输入不一致，且不止一个文件）")
+    ref_path = _pick_ref(ref_dir, man.get("input", {}).get("path", ""), [hyp_file])
     ref_text = _read_ref(ref_path)
     value = cer(ref_text, hyp)
     if value is None:

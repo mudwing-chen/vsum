@@ -4,7 +4,7 @@
 语料目录（每项一个子目录，按名字排序）：
   corpus/<item>/manifest.json   （可选；有就读 terms.path）
   corpus/<item>/segments.json
-  corpus/<item>/ref.srt|ref.txt（或与 manifest.input.path 同名的文本）
+  corpus/<item>/ref.srt|ref.txt（或与 manifest.input.path 同名的文本；假设稿本身不当参考）
 
 口径：
 - 单项 CER = 编辑距离 / 参考归一化字数；micro = 总距离 / 总参考字数；macro = 各项平均。
@@ -37,18 +37,13 @@ def _items(root):
 
 
 def _ref_for(d, man):
-    files = [os.path.join(d, f) for f in sorted(os.listdir(d))
-             if f.endswith((".txt", ".srt", ".vtt"))]
-    if not files:
-        return None
-    stem = os.path.splitext(os.path.basename(man.get("input", {}).get("path", "")))[0]
-    for f in files:
-        if os.path.splitext(os.path.basename(f))[0] == stem:
-            return f
-    for f in files:
-        if os.path.splitext(os.path.basename(f))[0] == "ref":
-            return f
-    return files[0] if len(files) == 1 else None
+    """参考文本：与 manifest.input.path 同名 > ref.* > 唯一候选；假设本身绝不当参考。
+
+    复用 evaluate._pick_ref 的挑选与拒绝规则：目录里只剩假设稿时它会抛
+    FileNotFoundError（CLI 退出码 2），而不是给出一个恒为 0 的 CER。
+    """
+    hyp = os.path.join(d, "segments.json")
+    return evaluate._pick_ref(d, (man.get("input") or {}).get("path", ""), [hyp])
 
 
 def item_record(name, d):
@@ -58,8 +53,6 @@ def item_record(name, d):
         segs = json.load(fh).get("segments", [])
     hyp = "".join(s.get("text", "") for s in segs)
     ref_path = _ref_for(d, man)
-    if not ref_path:
-        raise ValueError("%s: 找不到唯一参考文本（ref.srt/ref.txt 或与输入同名）" % name)
     ref = evaluate._read_ref(ref_path)
     rn, hn = evaluate.normalize(ref), evaluate.normalize(hyp)
     if not rn:

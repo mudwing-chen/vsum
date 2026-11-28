@@ -25,14 +25,14 @@ COMMANDS = [
     ("export", "转写", "--segments FILE -o DIR", "从 segments.json 重新导出四件套"),
     ("fetch", "抓取", "URL -o DIR", "只抓取：抖音 / B站 / YouTube → 本地视频"),
     ("login", "抓取", "douyin", "扫码登录，登录态存进独立 profile"),
-    ("batch", "抓取", "LIST -o DIR", "一串链接或清单文件，串行跑，失败不中断"),
+    ("batch", "抓取", "LIST -o DIR", "一串链接或清单文件；默认串行，--jobs 可并行"),
     ("find", "查询与剪辑", "DIR 关键词...", "在逐字稿里搜，命中项带 [mm:ss]"),
     ("clip", "查询与剪辑", "DIR mm:ss -o FILE", "按时间点剪出那一段（前后各留 1.5 秒）"),
     ("ocr", "核对与修正", "DIR", "抽帧 OCR，用画面上的拼写核对专名"),
     ("fix", "核对与修正", "DIR", "按词表修正（默认只预演，--apply 才写盘）"),
     ("audit", "核对与修正", "DIR", "词表命中的体检报告"),
     ("mine", "核对与修正", "DIR", "挖词表外的变体候选"),
-    ("doctor", "诊断与评测", "", "逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR"),
+    ("doctor", "诊断与评测", "", "逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR / yt-dlp"),
     ("bench", "诊断与评测", "--audio FILE", "在本机音频上量 RTF，比较 compute_type"),
     ("eval", "诊断与评测", "--manifest FILE", "按 manifest 算 CER 与术语召回"),
     ("holdout", "诊断与评测", "--corpus DIR", "固定语料上的 CER 与回归比较"),
@@ -67,7 +67,8 @@ def overview():
         lines.append("  %s%s%s" % (row, " " * (pad - _width(row)), desc))
     lines += [
         "",
-        "退出码：0 成功 · 2 用法或输入错误 · 3 缺依赖 · 4 转写/抓取失败 · 5 评测不达标 · 130 中断",
+        "退出码：0 成功 · 1 find 无命中 · 2 用法或输入错误 · 3 缺依赖 · 4 转写/抓取/剪片失败 · "
+        "5 评测不达标或 batch 有失败项 · 130 中断",
         "环境变量、平台差异与已知限制见 README：https://github.com/mudwing-chen/vsum",
     ]
     return "\n".join(lines)
@@ -78,7 +79,8 @@ def _export_cmd(argv):
     ap.add_argument("--segments", required=True,
                     help="segments.json 路径，也可以直接给 vsum 的输出目录")
     ap.add_argument("-o", "--out", required=True, help="产物目录，不存在会建")
-    ap.add_argument("--clean", action="store_true", help="顺带生成清洗版 transcript.md")
+    ap.add_argument("--clean", action="store_true",
+                    help="顺带生成清洗版 transcript.clean.md（transcript.md 本身不变）")
     args = ap.parse_args(argv)
     seg_path = args.segments
     if os.path.isdir(seg_path):
@@ -87,6 +89,10 @@ def _export_cmd(argv):
         raise pipeline.InputError("segments 文件不存在：%s" % seg_path)
     with open(seg_path, encoding="utf-8") as fh:
         segments = json.load(fh).get("segments", [])
+    if not segments:
+        # 空转写导出成四件套空文件、退出码 0，脚本会把它当成功；find/clip/pipeline
+        # 都按错误处理，这里没理由例外。
+        raise pipeline.InputError("segments 文件里没有可用段落：%s" % seg_path)
     os.makedirs(args.out, exist_ok=True)
     clean_md = None
     if args.clean:
@@ -110,17 +116,31 @@ def _doctor_cmd(argv):
     return doctor.run(args.model)
 
 
-def _main_cmd(argv, prog="vsum"):
+def _decode_opts(args):
+    """把 CLI 的批/VAD/chunk 参数收成一个 dict；pipeline 与 batch 共用。"""
+    size = (args.batch_size or "1").strip()
+    if size != "auto" and not size.isdigit():
+        raise pipeline.InputError("--batch-size 只能是整数或 auto：%s" % size)
+    return {"batch_size": size, "threshold": args.vad_threshold,
+            "min_speech_duration_ms": args.vad_min_speech_ms,
+            "min_silence_duration_ms": args.vad_min_silence_ms,
+            "speech_pad_ms": args.vad_pad_ms, "no_vad": args.no_vad,
+            "chunk_length": args.chunk_length}
+
+
+def _parse_main(argv, prog="vsum"):
     ap = argparse.ArgumentParser(prog=prog, description="逐字稿工具：vsum <file> -o DIR")
     ap.add_argument("input", help="本地音视频文件，或抖音/B站/YouTube 链接")
     ap.add_argument("-o", "--out", required=True, help="产物目录，不存在会建")
     ap.add_argument("--model", default="small",
-                    help="tiny|base|small|medium|large-v3，或本地模型目录（默认 small）")
+                    help="tiny|base|small|medium|large-v3|auto，或本地模型目录（默认 small；"
+                         "auto 按显存取上限，CPU 固定 small）")
     ap.add_argument("--lang", default="zh", help="语言：zh / en / auto（默认 zh）")
     ap.add_argument("--pack", default=None,
                     help="术语包 JSON；默认用包内 data/terms.json（示例词表）")
     ap.add_argument("--clean", action="store_true",
-                    help="额外生成一版清洗稿（去口水词与重复），只影响 transcript.md")
+                    help="额外生成一版清洗稿 transcript.clean.md（去口水词与重复），"
+                         "transcript.md 保持逐字原样")
     ap.add_argument("--words", action="store_true",
                     help="记录词级时间戳与概率（更慢，manifest 里会记 word_timestamps）")
     ap.add_argument("--no-context", action="store_true",
@@ -136,23 +156,68 @@ def _main_cmd(argv, prog="vsum"):
     ap.add_argument("--llm-url", default=None,
                     help="OpenAI-compatible base，如 http://127.0.0.1:11434/v1")
     ap.add_argument("--llm-model", default=None, help="LLM 模型名，如 qwen2.5:7b")
+    ap.add_argument("--llm-key", default=None,
+                    help="云端 LLM 的 API key（发 Authorization: Bearer）；"
+                         "也可用环境变量 VSUM_LLM_KEY / OPENAI_API_KEY")
     ap.add_argument("--force", action="store_true", help="不复用旧转写，强制重跑模型")
+    ap.add_argument("--batch-size", default="1",
+                    help="批推理大小：整数或 auto（按显存给 16/8/4）；CPU 上自动为 1。"
+                         "默认 1（串行，产物与旧版一致）")
+    ap.add_argument("--vad-threshold", type=float, default=None,
+                    help="VAD 语音阈值，默认 0.5；风声/音乐重的素材调高")
+    ap.add_argument("--vad-min-speech-ms", type=int, default=None, help="VAD 最短语音（毫秒）")
+    ap.add_argument("--vad-min-silence-ms", type=int, default=None, help="VAD 最短静音（毫秒）")
+    ap.add_argument("--vad-pad-ms", type=int, default=None, help="VAD 语音两侧留白（毫秒）")
+    ap.add_argument("--no-vad", action="store_true", help="关闭 VAD（短音频/纯人声）")
+    ap.add_argument("--chunk-length", type=int, default=None,
+                    help="解码 chunk 秒数（串行与批推理都生效；默认随模型）")
     ap.add_argument("--json", action="store_true", help="stdout 只打一行 result.json")
     ap.add_argument("--quiet", action="store_true", help="压制人类日志，只留错误")
     ap.add_argument("--version", action="version", version="vsum " + __version__)
-    args = ap.parse_args(argv)
-    return pipeline.run(args.input, args.out, args.model, args.lang, args.pack,
-                        args.clean, True if args.words else None,
-                        browser=args.browser, fetch_only=args.fetch_only,
-                        headless=True if args.headless else None, profile=args.profile,
-                        summary_mode=args.summary, llm_url=args.llm_url,
-                        llm_model=args.llm_model, force=args.force,
-                        context=not args.no_context)
+    return ap.parse_args(argv)
+
+
+def _llm_key(args):
+    """--llm-key 优先，其次环境变量；本地 Ollama 不设也能用。"""
+    return (args.llm_key or os.environ.get("VSUM_LLM_KEY")
+            or os.environ.get("OPENAI_API_KEY") or None)
+
+
+def _run_main(argv, prog="vsum"):
+    """默认命令的完整流程：解析 → 跑 → 按 --json/--quiet 决定人类日志去哪。
+
+    `vsum transcribe` 走同一个函数：子命令只是默认命令的显式名字，退出码、
+    --json / --quiet 必须完全一致，否则「按文档写全名字」的脚本就解析不了。
+    """
+    args = _parse_main(argv, prog)
+
+    def go():
+        return pipeline.run(args.input, args.out, args.model, args.lang, args.pack,
+                            args.clean, True if args.words else None,
+                            browser=args.browser, fetch_only=args.fetch_only,
+                            headless=True if args.headless else None, profile=args.profile,
+                            summary_mode=args.summary, llm_url=args.llm_url,
+                            llm_model=args.llm_model, llm_key=_llm_key(args),
+                            force=args.force,
+                            context=not args.no_context,
+                            decode_opts=_decode_opts(args))
+
+    if args.json:
+        # stdout 只留那一行 result.json，进度日志全部让给 stderr
+        with contextlib.redirect_stdout(sys.stderr):
+            res = go()
+        print(json.dumps(res, ensure_ascii=False))
+    elif args.quiet:
+        with contextlib.redirect_stdout(io.StringIO()):
+            go()
+    else:
+        go()
+    return 0
 
 
 def _transcribe_cmd(argv):
     """默认命令的显式名字：用法和 vsum <文件> -o DIR 完全一致。"""
-    return _main_cmd(argv, prog="vsum transcribe")
+    return _run_main(argv, prog="vsum transcribe")
 
 
 def _fetch_cmd(argv):
@@ -164,9 +229,12 @@ def _fetch_cmd(argv):
     ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控）")
     ap.add_argument("--profile", default=None, help="浏览器独立 profile 目录")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不起浏览器")
+    ap.add_argument("--force", action="store_true",
+                    help="不复用上次下好的视频，强制重新抓取")
     args = ap.parse_args(argv)
     info = fetch_mod.run(args.url, args.out, browser=args.browser, dry_run=args.dry_run,
-                         headless=True if args.headless else None, profile=args.profile)
+                         headless=True if args.headless else None, profile=args.profile,
+                         force=args.force)
     if not args.dry_run:
         print(info.get("video") or info.get("outDir") or args.out)
     return 0
@@ -188,10 +256,10 @@ def _login_cmd(argv):
 
 
 def _batch_cmd(argv):
-    ap = argparse.ArgumentParser(prog="vsum batch", description="一串链接串行跑，失败不中断")
+    ap = argparse.ArgumentParser(prog="vsum batch", description="一串链接或清单文件；默认串行，--jobs 可并行")
     ap.add_argument("list", help="urls.txt（一行一条）或 index.json（{\"items\":[{\"href\"}]}）")
     ap.add_argument("-o", "--out", required=True, help="产物根目录，每条一个子目录")
-    ap.add_argument("--model", default="small", help="默认 small")
+    ap.add_argument("--model", default="small", help="默认 small；auto 按显存取上限")
     ap.add_argument("--lang", default="zh", help="语言：zh / en / auto（默认 zh）")
     ap.add_argument("--pack", default=None, help="术语包 JSON，默认包内 data/terms.json")
     ap.add_argument("--no-context", action="store_true", help="关掉上文条件（不推荐，见 README）")
@@ -199,16 +267,32 @@ def _batch_cmd(argv):
     ap.add_argument("--headless", action="store_true", help="无头模式（可能被风控）")
     ap.add_argument("--profile", default=None, help="浏览器独立 profile 目录")
     ap.add_argument("--force", action="store_true", help="不跳过已完成的目录")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="并行条数（子进程），默认 1；多卡时再调高")
+    ap.add_argument("--devices", default=None,
+                    help="并行时用的卡，逗号分隔，如 cuda:0,cuda:1")
+    ap.add_argument("--batch-size", default="1",
+                    help="批推理大小：整数或 auto；默认 1")
+    ap.add_argument("--vad-threshold", type=float, default=None, help="VAD 语音阈值，默认 0.5")
+    ap.add_argument("--vad-min-speech-ms", type=int, default=None, help="VAD 最短语音（毫秒）")
+    ap.add_argument("--vad-min-silence-ms", type=int, default=None, help="VAD 最短静音（毫秒）")
+    ap.add_argument("--vad-pad-ms", type=int, default=None, help="VAD 语音两侧留白（毫秒）")
+    ap.add_argument("--no-vad", action="store_true", help="关闭 VAD")
+    ap.add_argument("--chunk-length", type=int, default=None,
+                    help="解码 chunk 秒数（串行与批推理都生效；默认随模型）")
     ap.add_argument("--json", action="store_true", help="stdout 只打一行 batch.json")
     ap.add_argument("--quiet", action="store_true", help="压制人类日志")
     args = ap.parse_args(argv)
     if not os.path.exists(args.list):
         raise pipeline.InputError("清单文件不存在：%s" % args.list)
+    if args.jobs < 1:
+        raise pipeline.InputError("--jobs 必须 >= 1")
     call = lambda: batch_mod.run(args.list, args.out, args.model, args.lang, args.pack,
                                  browser=args.browser,
                                  headless=True if args.headless else None,
                                  profile=args.profile, force=args.force,
-                                 context=not args.no_context)
+                                 context=not args.no_context, jobs=args.jobs,
+                                 devices=args.devices, decode_opts=_decode_opts(args))
     if args.json:
         with contextlib.redirect_stdout(sys.stderr):
             code = call()
@@ -255,6 +339,10 @@ SUB = {
 
 def _help_for(name):
     """vsum help <子命令>：把 argparse 的 --help 原样放出来。"""
+    if name in ("help", "overview"):
+        # help 本身是文档化的入口词，脚本会拿 `vsum help help` 探测支持情况
+        print(overview())
+        return 0
     if name not in SUB:
         print("error: 没有这个子命令：%s" % name, file=sys.stderr)
         print("可用：%s" % " ".join(sorted(SUB)), file=sys.stderr)
@@ -297,25 +385,20 @@ def main(argv=None):
                 rc = SUB[name](argv[1:])
             except SystemExit as exc:    # 子命令的 argparse --help / 用法错误
                 return exc.code if isinstance(exc.code, int) else 0
-            return rc or 0
-        want_json = "--json" in argv
-        quiet = "--quiet" in argv
-        if want_json:
-            with contextlib.redirect_stdout(sys.stderr):
-                res = _main_cmd(argv)
-            print(json.dumps(res, ensure_ascii=False))
-            return 0
-        if quiet:
-            with contextlib.redirect_stdout(io.StringIO()):
-                _main_cmd(argv)
-            return 0
-        _main_cmd(argv)
-        return 0
+            # 子命令要么返回退出码，要么返回 None（例如 ocr）：非 int 一律算成功。
+            # 以前写的是 `rc or 0`，transcribe 返回 result 字典时 sys.exit(dict)
+            # 会把字典打到 stderr 并以 1 退出——按 README 写全 `vsum transcribe` 的
+            # 脚本就全挂了。
+            return rc if isinstance(rc, int) else 0
+        return _run_main(argv)
     except pipeline.InputError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
     except (FileNotFoundError, NotADirectoryError, IsADirectoryError) as exc:
-        print("error: %s" % (exc.strerror or exc), file=sys.stderr)
+        # 只打 strerror 的话用户看到的是「error: No such file or directory」，
+        # 完全不知道是哪个文件；文件名才是能动手的那一半信息。
+        detail = "%s：%s" % (exc.filename, exc.strerror) if exc.filename else (exc.strerror or exc)
+        print("error: %s" % detail, file=sys.stderr)
         return 2
     except json.JSONDecodeError as exc:
         print("error: JSON 解析失败：%s" % exc, file=sys.stderr)

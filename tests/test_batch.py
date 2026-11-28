@@ -71,7 +71,8 @@ with open(lst, "w", encoding="utf-8") as fh:
 code = batch.run(lst, out, model="tiny")
 check("有失败退出 5", code == 5, code)
 data = json.load(open(os.path.join(out, "batch.json"), encoding="utf-8"))
-check("batch.json 计数", data["counts"] == {"ok": 2, "skipped": 0, "failed": 1}, data["counts"])
+check("batch.json 计数", data["counts"] == {"ok": 2, "skipped": 0, "failed": 1,
+                                          "interrupted": 0, "pending": 0}, data["counts"])
 check("失败也继续跑完", len(calls) == 3, calls)
 check("失败项有错误", any(i["status"] == "failed" and "boom" in i["error"] for i in data["items"]), data["items"])
 check("没有 .tmp 残留", not os.path.exists(os.path.join(out, "batch.json.tmp")))
@@ -89,6 +90,45 @@ batch.run(lst, out, model="tiny", force=True)
 check("--force 全跑", len(calls) == 3, calls)
 batch.pipeline.run = real
 
+# 失败的空目录不该留在产物根目录里（以前并行还会留一个只有 .batch.log 的目录）
+def fake_dir_then_boom(url, target, *a, **k):
+    os.makedirs(target, exist_ok=True)
+    raise RuntimeError("boom-after-mkdir")
+
+
+batch.pipeline.run = fake_dir_then_boom
+empty_fail_out = os.path.join(work, "out_emptyfail")
+empty_fail_lst = os.path.join(work, "one.txt")
+with open(empty_fail_lst, "w", encoding="utf-8") as fh:
+    fh.write("https://www.bilibili.com/video/BV1cc411c7m3\n")
+batch.run(empty_fail_lst, empty_fail_out, model="tiny")
+check("失败后清掉空目录",
+      not os.path.exists(os.path.join(empty_fail_out, "bilibili-BV1cc411c7m3")),
+      os.listdir(empty_fail_out))
+batch.pipeline.run = real
+
+# --jobs 并行：走真 Popen 路径（把子进程换成必定失败的 python，验证调度、日志、计数）
+real_child_cmd = batch._child_cmd
+batch._child_cmd = lambda *a, **k: [sys.executable, "-c", "import sys; sys.exit(2)"]
+par_out = os.path.join(work, "par")
+par_list = os.path.join(work, "par.txt")
+with open(par_list, "w", encoding="utf-8") as fh:
+    fh.write("https://www.bilibili.com/video/BV1aa411c7m1\n"
+             "https://www.bilibili.com/video/BV1bb411c7m2\n")
+par_code = batch.run(par_list, par_out, model="tiny", jobs=2)
+batch._child_cmd = real_child_cmd
+par = json.load(open(os.path.join(par_out, "batch.json"), encoding="utf-8"))
+check("并行有失败退出 5", par_code == 5, par_code)
+check("并行 counts 与 items 对得上",
+      sum(par["counts"].values()) == par["total"] == len(par["items"]) == 2, par["counts"])
+check("并行失败项都记 failed", par["counts"]["failed"] == 2, par["counts"])
+check("并行日志放 .logs/ 且写进 error",
+      all(".logs/" in i["error"] for i in par["items"])
+      and len(os.listdir(os.path.join(par_out, ".logs"))) == 2, par["items"])
+check("并行失败不留目标目录和 .batch.log",
+      not os.path.exists(os.path.join(par_out, "bilibili-BV1aa411c7m1"))
+      and not any(n.endswith(".batch.log") for n in os.listdir(par_out)), os.listdir(par_out))
+
 # CLI：空清单 exit 0 且写 batch.json
 empty = os.path.join(work, "empty.txt")
 open(empty, "w").close()
@@ -105,4 +145,13 @@ check("清单不存在退出 2", proc.returncode == 2 and "error:" in proc.stder
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))
     sys.exit(1)
+# --devices：裸数字按 CUDA 序号理解（nvidia-smi 的写法），不合法就早报错
+check("devices 裸数字", batch._device_list("0,1") == ["cuda:0", "cuda:1"], batch._device_list("0,1"))
+check("devices 保留显式写法", batch._device_list("cuda:0, cpu") == ["cuda:0", "cpu"])
+try:
+    batch._device_list("0.5")
+    check("devices 非法要报错", False)
+except ValueError:
+    check("devices 非法要报错", True)
+
 print("OK batch")

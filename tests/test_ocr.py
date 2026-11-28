@@ -88,14 +88,65 @@ check("中文字差带上下文", ocr.char_diff("甚至希特勒都对你大有�
 check("完全一样没有差", ocr.char_diff("一觉醒来", "一觉醒来") == [])
 check("差太多不列", ocr.char_diff("军事王牌中的王牌", "甚至希特勒都对你大有嘉奖") == [])
 
-# 没有 OCR 引擎时要明确报错，而不是静默返回空
+# 报错类型要能被 cli.py 接住：DependencyError -> 退出码 3，InputError -> 2。
+# 裸的 RuntimeError 会一路冒到顶变成 traceback + 退出码 1。
+import builtins  # noqa: E402
+import json  # noqa: E402
+import types  # noqa: E402
+
+from _tmpdir import mkdtemp as _mkdtemp  # noqa: E402
+from vsum import pipeline as pipeline_mod  # noqa: E402
+from vsum import transcribe as transcribe_mod  # noqa: E402
+
+check("ocr.DependencyError 就是 transcribe 的那个",
+      ocr.DependencyError is transcribe_mod.DependencyError)
+check("ocr.InputError 就是 pipeline 的那个", ocr.InputError is pipeline_mod.InputError)
+check("两者都是 RuntimeError 子类（老代码还能捕到）",
+      issubclass(ocr.DependencyError, RuntimeError) and issubclass(ocr.InputError, RuntimeError))
+
+# 没装 ffmpeg：DependencyError，不是 RuntimeError
+_shutil = ocr.shutil
+try:
+    ocr.shutil = types.SimpleNamespace(which=lambda name: None)
+    try:
+        ocr.extract_frames("/nope/video.mp4", [0.0], _mkdtemp())
+        check("没 ffmpeg 要抛 DependencyError", False)
+    except ocr.DependencyError as exc:
+        check("没 ffmpeg 要抛 DependencyError", "ffmpeg" in str(exc), str(exc))
+    except RuntimeError as exc:
+        check("没 ffmpeg 要抛 DependencyError", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
+finally:
+    ocr.shutil = _shutil
+
+# 没装 OCR 引擎：DependencyError，提示里带安装命令（import 拦掉，不依赖真环境）
+_real_import = builtins.__import__
+
+
+def _no_rapidocr(name, *args, **kwargs):
+    if name.split(".")[0] == "rapidocr_onnxruntime":
+        raise ImportError("No module named 'rapidocr_onnxruntime'")
+    return _real_import(name, *args, **kwargs)
+
+
+try:
+    builtins.__import__ = _no_rapidocr
+    try:
+        ocr._engine()
+        check("缺引擎要抛 DependencyError", False)
+    except ocr.DependencyError as exc:
+        check("缺引擎要抛 DependencyError", "vsum[ocr]" in str(exc), str(exc))
+    except RuntimeError as exc:
+        check("缺引擎要抛 DependencyError", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
+finally:
+    builtins.__import__ = _real_import
+
+# run() 里几处报错：一整帧都抽不出来 -> InputError
 _engine = ocr._engine
 _frames = ocr.extract_frames
 ocr.extract_frames = lambda video, times, out, quality=3: [(t, "fake.jpg") for t in times]
-ocr._engine = lambda: (_ for _ in ()).throw(RuntimeError("没有 OCR 引擎：pip install 'vsum[ocr]'"))
+ocr._engine = lambda: (_ for _ in ()).throw(
+    ocr.DependencyError("没有 OCR 引擎：pip install 'vsum[ocr]'"))
 try:
-    import json
-    from _tmpdir import mkdtemp as _mkdtemp
     d = _mkdtemp()
     with open(os.path.join(d, "segments.json"), "w", encoding="utf-8") as fh:
         json.dump({"segments": segs}, fh, ensure_ascii=False)
@@ -106,8 +157,20 @@ try:
         with redirect_stdout(buf):
             ocr.run(d, limit=1)
         check("缺引擎要抛错", False)
-    except RuntimeError as exc:
+    except ocr.DependencyError as exc:
         check("缺引擎报错带安装提示", "vsum[ocr]" in str(exc), str(exc))
+    except RuntimeError as exc:
+        check("缺引擎报错带安装提示", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
+
+    ocr.extract_frames = lambda video, times, out, quality=3: []
+    try:
+        with redirect_stdout(io.StringIO()):
+            ocr.run(d, limit=1)
+        check("抽不出帧要抛 InputError", False)
+    except ocr.InputError as exc:
+        check("抽不出帧要抛 InputError", "一帧" in str(exc), str(exc))
+    except RuntimeError as exc:
+        check("抽不出帧要抛 InputError", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
 finally:
     ocr._engine = _engine
     ocr.extract_frames = _frames

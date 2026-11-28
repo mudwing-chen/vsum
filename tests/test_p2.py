@@ -119,8 +119,42 @@ try:
 except ValueError as exc:
     parsed = None
     check("--json 可解析", False, str(exc))
+# 复用路径的 decode 来自旧 manifest：上一轮的降档警告不能当这一轮发生的事再报一遍
+man_stale = manifest_mod.read(os.path.join(out, "manifest.json"))
+man_stale["decode"]["batch_fallback"] = "旧版本的批推理报错"
+man_stale["decode"]["fallbacks"] = [{"from": "large-v3/cuda/batch8",
+                                     "to": "medium/cuda/batch1", "reason": "oom"}]
+manifest_mod.write(man_stale, os.path.join(out, "manifest.json"))
+res_reuse = pipeline.run(inp, out, model="tiny", summary_mode="extractive")
+check("复用仍在复用", res_reuse["reused"] is True, res_reuse["reused"])
+check("复用不复读旧降档警告",
+      not any("批推理" in w or "降档" in w for w in res_reuse["warnings"]),
+      res_reuse["warnings"])
+
 check("--json 是 result", isinstance(parsed, dict) and parsed.get("schema") == 1, parsed)
 check("--json 日志在 stderr", "复用已有转写" in proc.stderr, proc.stderr[-300:])
+
+man = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8"))
+check("manifest warnings 是句子列表", isinstance(man.get("warnings"), list), type(man.get("warnings")))
+check("manifest 留了导出明细", isinstance(man.get("export"), dict) and "invalid_cues" in man["export"],
+      man.get("export"))
+
+# eval 直接读 pipeline 产出的 manifest：曾经因为 warnings 从 dict 变成 list 在这里抛 AttributeError
+proc = subprocess.run([sys.executable, "-m", "vsum", "eval", "--manifest",
+                       os.path.join(out, "manifest.json")],
+                      capture_output=True, text=True, cwd=ROOT)
+check("eval 读得了新 manifest", proc.returncode == 0, (proc.returncode, (proc.stderr or "")[-300:]))
+check("eval 报出 long/invalid cue 数", "long cues           : 1" in proc.stdout, proc.stdout[-300:])
+
+# 批推理：manifest 记的是实际生效的 context=False，复用判断不能被命令行的 True 判成「变了」
+from vsum import transcribe as _tr  # noqa: E402
+man["decode"]["config_sha256"] = _tr.config_digest("zh", batch_size=4)
+man["decode"]["condition_on_previous_text"] = False
+man["decode"]["batch_size"] = 4
+manifest_mod.write(man, os.path.join(out, "manifest.json"))
+_ok, _segs, _why = pipeline.segments_reusable(out, inp, "tiny", language="zh", context=True,
+                                              decode_opts={"batch_size": 4})
+check("批推理可以复用", _ok is True, _why)
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

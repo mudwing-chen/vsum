@@ -93,7 +93,9 @@ json.dump({"segments": [{"start": 0.0, "end": 3.0, "text": "今天我们聊聊�
           open(os.path.join(case, "segments.json"), "w", encoding="utf-8"), ensure_ascii=False)
 proc = run("fix", case, "--apply")
 check("零命中退出 0", proc.returncode == 0, proc.stderr)
-check("过期 corrections.json 被删", not os.path.exists(os.path.join(case, "corrections.json")))
+# corrections.json 是输入（手写清单也是这个位置），零命中只提示、不删
+check("零命中保留 corrections.json", os.path.exists(os.path.join(case, "corrections.json")),
+      "corrections.json 被删了——它是输入，删掉等于删用户数据")
 check("过期 fixed.txt 被删", not os.path.exists(os.path.join(case, "transcript.fixed.txt")))
 check("过期 segments.fixed.json 被删", not os.path.exists(os.path.join(case, "segments.fixed.json")))
 

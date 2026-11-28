@@ -82,6 +82,96 @@ except browser.BrowserError as exc:
 except ImportError:
     check("非法浏览器名先校验再 import selenium", False, "ImportError 先发生了")
 
+
+# 等扫码期间要能被 Ctrl-C 打断，而且不能漏掉 Chrome/chromedriver。
+# KeyboardInterrupt 是 BaseException，`except Exception: close(driver)` 接不住它。
+class _FakeDriver:
+    def __init__(self, cookies=None, get_error=None):
+        self.quit_called = False
+        self.page_timeout = None
+        self._cookies = cookies or []
+        self._get_error = get_error
+
+    def set_page_load_timeout(self, sec):
+        self.page_timeout = sec
+
+    def get(self, url):
+        if self._get_error is not None:
+            raise self._get_error
+
+    def get_cookies(self):
+        return list(self._cookies)
+
+    def quit(self):
+        self.quit_called = True
+
+
+class _CtrlCDriver(_FakeDriver):
+    """等到第一次轮询就按下 Ctrl-C。"""
+
+    def get_cookies(self):
+        raise KeyboardInterrupt()
+
+
+class TimeoutException(Exception):
+    """名字和 selenium 的一致就够了：browser.is_timeout 按类名判定。"""
+
+
+_orig_open = browser.open_browser
+try:
+    ctrl_c = _CtrlCDriver()
+    browser.open_browser = lambda **kw: (ctrl_c, "chrome")
+    try:
+        browser.login_douyin(timeout=5)
+        check("Ctrl-C 不该被吞掉", False)
+    except KeyboardInterrupt:
+        check("Ctrl-C 继续往上抛", True)
+    check("Ctrl-C 之后 driver 被关掉", ctrl_c.quit_called)
+    check("登录前设了页面加载超时", ctrl_c.page_timeout == 40, ctrl_c.page_timeout)
+
+    timed_out = _FakeDriver(get_error=TimeoutException("timeout: 页面 40 秒没加载"))
+    browser.open_browser = lambda **kw: (timed_out, "chrome")
+    try:
+        browser.login_douyin(profile="/tmp/vsum-login-p", timeout=5)
+        check("页面加载超时要报 BrowserError", False)
+    except browser.BrowserError as exc:
+        msg = str(exc)
+        check("页面加载超时报 BrowserError 且不是 selenium 异常", True)
+        check("超时提示提到 profile", "profile" in msg, msg)
+        check("超时提示提到没加载出来", "没加载出来" in msg or "页面没打开" in msg, msg)
+    check("超时之后 driver 被关掉", timed_out.quit_called)
+
+    ok_driver = _FakeDriver(cookies=[{"name": "sessionid"}, {"name": "ttwid"}])
+    browser.open_browser = lambda **kw: (ok_driver, "chrome")
+    got_driver, got_kind = browser.login_douyin(timeout=1)
+    check("扫码成功返回 driver", got_driver is ok_driver and got_kind == "chrome", got_kind)
+    check("成功时不关浏览器（留给调用方）", not ok_driver.quit_called)
+    browser.close(got_driver)
+    check("close() 关掉 driver", ok_driver.quit_called)
+
+    deadline_driver = _FakeDriver()          # 一直没登录 -> 扫码超时
+    browser.open_browser = lambda **kw: (deadline_driver, "chrome")
+    try:
+        browser.login_douyin(timeout=0)
+        check("扫码超时要报 BrowserError", False)
+    except browser.BrowserError as exc:
+        check("扫码超时要报 BrowserError", "超时" in str(exc), str(exc))
+    check("扫码超时也关掉 driver", deadline_driver.quit_called)
+finally:
+    browser.open_browser = _orig_open
+
+check("is_timeout 认 TimeoutException", browser.is_timeout(TimeoutException("x")))
+check("is_timeout 不认别的异常", not browser.is_timeout(OSError("x")))
+check("close(None) 不炸", browser.close(None) is None)
+
+
+class _DeadDriver:
+    def quit(self):
+        raise RuntimeError("session deleted because of page crash")
+
+
+check("close() 容忍已死的 driver", browser.close(_DeadDriver()) is None)
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)

@@ -38,6 +38,22 @@ def lines_of(path):
 
 RULES = termrules.load()
 
+# 中文没有词边界，单字 variant 会在任意合成词里命中，必须在加载时就挡住
+_bad = os.path.join(mkdtemp(), "bad-terms.json")
+with open(_bad, "w", encoding="utf-8") as _fh:
+    json.dump({"terms": [{"canonical": "云端", "variants": [{"surface": "云"}]}]},
+              _fh, ensure_ascii=False)
+try:
+    termrules.load(_bad)
+    check("中文单字 variant 被拒", False, "没有抛错")
+except ValueError as exc:
+    check("中文单字 variant 被拒", "至少两个字" in str(exc), str(exc))
+_good = os.path.join(mkdtemp(), "ok-terms.json")
+with open(_good, "w", encoding="utf-8") as _fh:
+    json.dump({"terms": [{"canonical": "云端", "variants": [{"surface": "云断"}]}]},
+              _fh, ensure_ascii=False)
+check("中文两字 variant 照收", termrules.load(_good)[0]["surface"] == "云断")
+
 
 def strip_paths(path):
     """corrections.json 里的 transcript/fixed 是绝对路径，两次跑目录不同，比较时去掉。"""

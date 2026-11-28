@@ -23,7 +23,7 @@ def sha256_file(path, chunk=1 << 20):
 
 def build(input_path, audio_path, decode, segments, outputs, warnings,
           terms_path=None, mode="verbatim", duration=None, version=None, source_url=None,
-          summary=None):
+          summary=None, export=None):
     terms = {"pack": None, "path": None, "sha256": None}
     if terms_path:
         terms = {"pack": os.path.basename(terms_path), "path": terms_path,
@@ -40,6 +40,9 @@ def build(input_path, audio_path, decode, segments, outputs, warnings,
         "counts": {"segments": len(segments), "chars": sum(len(s["text"]) for s in segments)},
         "summary": summary or {"mode": "none", "bullets": 0, "dropped": 0},
         "warnings": warnings,
+        # warnings 是给人读的句子（和 result.json 同一份）；逐条明细放这里，
+        # eval 要靠它数「有几条 cue 被修正过」。
+        "export": export or {},
         "outputs": {k: os.path.basename(v) for k, v in outputs.items()},
     }
 

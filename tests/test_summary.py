@@ -45,7 +45,9 @@ good = "- 今天我们聊聊 cloud code 这个工具 [00:00]"
 bad_time = "- 今天我们聊聊 cloud code 这个工具 [00:12]"
 bad_text = "- 这句话不在原文里 [00:00]"
 md = "# 摘要\n\n" + good + "\n" + bad_time + "\n" + bad_text + "\n"
-# build：确定性 + 小节齐全
+kept1, dropped1, bad1 = summary.verify(md, SEGS)
+check("真引用保留", good in kept1, kept1)
+check("假时间/假文本被删", dropped1 == 2 and bad1 == [bad_time, bad_text], bad1)
 # 相邻段只差 1s 时，按时间取第一个会判错出处（真实 13:47 语料上误删 9 条）
 DENSE = [{"start": 741.54, "text": "不烤烟的人"},
          {"start": 742.58, "text": "不知道4.3是多高的分数"}]
@@ -64,6 +66,22 @@ check("并段拼接文本", merged[0]["text"] == "烤烟烤烟烤烟烤烟", mer
 frag_md, _, frag_bullets, frag_dropped, _ = summary.build(
     FRAG, {"title": "f", "duration_sec": 9.0, "low_conf": set()}, rules=RULES)
 check("碎段上摘要不回查失败", frag_dropped == 0, frag_md)
+
+# 合并块：引用落在块的后半截时，只比 [start±1s] 会把真引用当编造删掉
+# （LLM 给的 sec 是那一行原文的时间，合并后常在块的中后段）
+LATE = [{"start": 0.0, "end": 1.6, "text": "烤烟"},
+        {"start": 1.6, "end": 3.2, "text": "烤烟烤烟烤烟"},
+        {"start": 3.2, "end": 5.0, "text": "总分烤了4.3分"},
+        {"start": 5.0, "end": 9.0, "text": "不知道4.3是多高的分数"}]
+late_blocks = summary.merge_short(LATE)
+check("并段带块尾", late_blocks[-1].get("end") == 9.0, late_blocks)
+kept_late, dropped_late, _ = summary.verify("- 不知道4.3是多高的分数 [00:08]\n", late_blocks)
+check("块内靠后引用保留", dropped_late == 0, (kept_late, dropped_late))
+# 合并块池子里定位不到时，还要能对回原始段兜底
+blocks = [{"start": 0.0, "end": 2.0, "text": "开场白"}]
+raw = blocks + [{"start": 300.0, "end": 303.0, "text": "后面的原文在这里"}]
+kept_fb, dropped_fb, _ = summary.verify("- 后面的原文在这里 [05:00]\n", blocks, fallback=raw)
+check("原始段兜底可用", dropped_fb == 0, (kept_fb, dropped_fb))
 
 # build：确定性 + 小节齐全
 md1, mode1, bullets1, dropped1, warn1 = summary.build(SEGS, META, rules=RULES)
@@ -84,6 +102,46 @@ check("全局不重复", len(bullets) == len(set(bullets)), bullets)
 check("存疑段来自 low_conf", "[00:03]" in md1, md1)
 check("mode=none 返回空", summary.build(SEGS, META, "none", rules=RULES)[0] == "")
 
+# 存疑段取全局最差 5 段：以前先按时间取前 5 段再排序，视频后半段最差的进不了摘要
+LOW = [{"start": float(i * 10), "end": float(i * 10 + 3), "text": "第%d段内容" % i,
+        "avg_logprob": lp}
+       for i, lp in enumerate([-0.1, -0.15, -0.2, -0.25, -0.3, -2.0, -1.5])]
+low_md = summary.extract(LOW, {"title": "low", "duration_sec": 70.0,
+                               "low_conf": set(range(1, 8))}, RULES)
+dub = low_md.split("## 存疑段")[1]
+check("存疑段取全局最差",
+      "第5段内容" in dub and "第6段内容" in dub
+      and "第0段内容" not in dub and "第1段内容" not in dub, dub)
+check("存疑段按时间排列", dub.index("第2段内容") < dub.index("第6段内容"), dub)
+
+# 分章一章内容都取不到时，不能只留个空标题
+THIN = [{"start": 0.0, "end": 6.0,
+         "text": "第一句有数字 2026 的话。第二句也有数字 2027 但很短。", "avg_logprob": -0.2},
+        {"start": 400.0, "end": 406.0, "text": "后面一段也提了一句 2028 的事情。",
+         "avg_logprob": -0.2}]
+thin_md = summary.build(THIN, {"title": "thin", "duration_sec": 406.0,
+                               "low_conf": set()}, rules=RULES)[0]
+check("空分章不出版", "## 分章" not in thin_md, thin_md)
+
+# 关键词不分大小写：Fable / fable / FABLE 是同一个词，显示最常出现的原始拼写
+KW = [{"start": 0.0, "end": 3.0, "text": "Fable 是这本书的名字，Fable 又出现一次"},
+      {"start": 3.0, "end": 6.0, "text": "fable 小写一次"},
+      {"start": 6.0, "end": 9.0, "text": "还有 FABLE 全大写一次"}]
+kw = summary.keywords(KW, RULES)
+flat = dict((k.lower(), n) for k, n in kw)
+check("拉丁词不分大小写计数", flat.get("fable") == 4, kw)
+check("关键词显示最常出现的拼写", "Fable" in [k for k, _ in kw], kw)
+check("关键词按次数排序", all(kw[i][1] >= kw[i + 1][1] for i in range(len(kw) - 1)), kw)
+
+# 综述是模型改写，不受逐字回查管；但夹带的 [mm:ss] 必须对得上原文，对不上就整段不要
+good_ov = summary.render_llm([], "结论在 [00:03] 处出现", SEGS, META, "m")
+check("综述里对得上的时间引用保留", "## 一句话" in good_ov and "结论在" in good_ov, good_ov)
+ov_warn = []
+bad_ov = summary.render_llm([], "结论在 [59:59] 处出现", SEGS, META, "m", ov_warn)
+check("综述里对不上的时间引用整段删掉",
+      "## 一句话" not in bad_ov and "结论在" not in bad_ov, bad_ov)
+check("综述被删有 warning", any("综述" in w for w in ov_warn), ov_warn)
+
 # LLM 失败必须退回抽取式，不能抛
 md3, mode3, _, _, warn3 = summary.build(SEGS, META, "llm", llm_url="http://127.0.0.1:9/v1",
                                         llm_model="x", rules=RULES)
@@ -100,17 +158,40 @@ finally:
 check("build 删掉回查不过的", "编造的句子" not in md4 and d4 == 1, (md4, d4))
 check("build 记 warning", any("未通过回查" in w for w in w4), w4)
 
-# 长视频：>99 分钟时分钟位是三位，回查门不能因此静默失效
+# build 的回查池是喂给模型的合并块：块后半截的引用不能因为窗口不够被删（A 的核心）
+summary.extract = lambda *a, **k: "# 摘要\n\n## 要点\n- 不知道4.3是多高的分数 [00:08]\n"
+try:
+    late_md, _, _, late_dropped, _ = summary.build(
+        LATE, {"title": "l", "duration_sec": 9.0, "low_conf": set()}, rules=RULES)
+finally:
+    summary.extract = orig
+check("build 接受合并块内的靠后引用",
+      late_dropped == 0 and "不知道4.3是多高的分数" in late_md, (late_md, late_dropped))
+
+# 要点全被删掉后不能只剩一个空标题
+summary.extract = lambda *a, **k: "# 摘要\n\n## 要点\n- 编造的句子 [00:00]\n"
+try:
+    empty_md = summary.build(SEGS, META, rules=RULES)[0]
+finally:
+    summary.extract = orig
+check("空要点标题不出版", "## 要点" not in empty_md and "编造的句子" not in empty_md, empty_md)
+
+# 长视频：>99 分钟时分钟位是三位（`100:00`），满一小时 timefmt 给 `1:40:00`；
+# 两种时间戳回查门都要认，否则这些行匹配不上，引用门等于静默失效
 long_segs = [{"start": 6000.0, "end": 6003.0, "text": "一小时四十分钟之后的这一段",
               "avg_logprob": -0.2}]
-long_md = "- 一小时四十分钟之后的这一段 [100:00]"
-kept, dropped_long, _ = summary.verify(long_md, long_segs)
-check("三位分钟的有效引用保留", kept.strip() == long_md and dropped_long == 0, (kept, dropped_long))
-fake_md = "- 这句原文里根本没有 [100:00]"
-_, dropped_fake, bad_fake = summary.verify(fake_md, long_segs)
-check("三位分钟的编造内容仍被删", dropped_fake == 1 and bad_fake == [fake_md], (dropped_fake, bad_fake))
-check("mmss 超过 99 分钟不丢分钟位", summary._mmss(6000) == "100:00", summary._mmss(6000))
+for stamp in ("[100:00]", "[1:40:00]"):
+    long_md = "- 一小时四十分钟之后的这一段 %s" % stamp
+    kept, dropped_long, _ = summary.verify(long_md, long_segs)
+    check("长视频有效引用保留 %s" % stamp,
+          kept.strip() == long_md and dropped_long == 0, (kept, dropped_long))
+    fake_md = "- 这句原文里根本没有 %s" % stamp
+    _, dropped_fake, bad_fake = summary.verify(fake_md, long_segs)
+    check("长视频编造内容仍被删 %s" % stamp,
+          dropped_fake == 1 and bad_fake == [fake_md], (dropped_fake, bad_fake))
+check("mmss 超过 99 分钟不丢分钟位", summary._mmss(6000) == "1:40:00", summary._mmss(6000))
 check("BULLET 认三位分钟", bool(summary.BULLET.match("- x [100:00]")))
+check("BULLET 认小时段", bool(summary.BULLET.match("- x [1:40:00]")))
 
 # 细分段：前一段起点也落在 1 秒内时，不能取错段把真引用删掉
 close_segs = [{"start": 208.44, "end": 209.76, "text": "叫阿拉塞利的女孩", "avg_logprob": -0.1},

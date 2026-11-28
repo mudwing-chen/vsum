@@ -57,6 +57,47 @@ c = hardware.resolve(gpus=[], cuda_count=0)
 eq((c["compute_type"], c["source"]), ("int8_float32", "env"), "env override")
 os.environ.pop("WHISPER_COMPUTE", None)
 
+# 只覆盖设备时，compute 必须跟着设备走：GPU 判出的 float16 不能带到 CPU 上
+GPU = [{"name": "RTX 3060", "vram_gb": 12.0, "cc": 8.6}]
+eq(set(hardware.resolve(gpus=GPU, cuda_count=1)),
+   {"device", "compute_type", "model_cap", "name", "cc", "vram_gb", "reason", "source"},
+   "返回字段不变")
+os.environ["WHISPER_DEVICE"] = "cpu"
+c = hardware.resolve(gpus=GPU, cuda_count=1)
+eq((c["device"], c["compute_type"]), ("cpu", "int8"), "cpu 不接受 GPU 的 float16")
+eq(c["compute_type"] in hardware.CPU_COMPUTE, True, "cpu compute 在 CPU 白名单里")
+eq(c["source"], "env", "cpu 覆盖记为 env")
+if "WHISPER_DEVICE" not in c["reason"] or "float16" not in c["reason"]:
+    FAILS.append("reason 要说明覆盖: %r" % c["reason"])
+
+# 明确要了 CPU 能用的值就照办
+os.environ["WHISPER_COMPUTE"] = "int8_float32"
+c = hardware.resolve(gpus=GPU, cuda_count=1)
+eq(c["compute_type"], "int8_float32", "显式 CPU 值胜出")
+os.environ["WHISPER_COMPUTE"] = "float32"
+c = hardware.resolve(gpus=[], cuda_count=0)
+eq(c["compute_type"], "float32", "显式 float32 允许")
+os.environ.pop("WHISPER_COMPUTE", None)
+
+# 明确要了 float16 但设备是 CPU：纠正为 int8，并把原因写出来
+os.environ["WHISPER_COMPUTE"] = "float16"
+c = hardware.resolve(gpus=[], cuda_count=0)
+eq(c["compute_type"], "int8", "cpu 上的 float16 被纠正")
+if "float16" not in c["reason"] or "int8" not in c["reason"]:
+    FAILS.append("纠正原因不完整: %r" % c["reason"])
+os.environ["WHISPER_COMPUTE"] = "int8_float16"
+c = hardware.resolve(gpus=[], cuda_count=0)
+eq(c["compute_type"], "int8", "cpu 上的 int8_float16 被纠正")
+os.environ.pop("WHISPER_COMPUTE", None)
+
+# cuda 上显式给 float16 应原样保留（不误伤）
+os.environ.pop("WHISPER_DEVICE", None)
+os.environ["WHISPER_COMPUTE"] = "float16"
+c = hardware.resolve(gpus=GPU, cuda_count=1)
+eq((c["device"], c["compute_type"]), ("cuda", "float16"), "cuda 保留 float16")
+os.environ.pop("WHISPER_COMPUTE", None)
+os.environ.pop("WHISPER_DEVICE", None)
+
 from vsum import bench  # noqa: E402
 from vsum.pipeline import InputError  # noqa: E402
 

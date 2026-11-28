@@ -13,9 +13,9 @@ import urllib.request
 from . import termrules
 from .timefmt import mmss as _mmss
 
-# 分钟位允许 >=2 位：超过 99 分钟的视频是 `100:00`，写死两位会让这些行匹配不上，
-# verify() 直接 continue，等于长视频的引用门静默失效。
-BULLET = re.compile(r"^- (.+?) \[(\d{2,}):(\d{2})\]\s*$")
+# 分钟位允许 >=2 位：超过 99 分钟的视频是 `100:00`；满一小时 timefmt 给 `H:MM:SS`。
+# 两种都得认，否则长视频的要点一行都匹配不上，verify() 直接 continue，引用门静默失效。
+BULLET = re.compile(r"^- (.+?) \[(\d{1,}):(\d{2})(?::(\d{2}))?\]\s*$")
 SPLIT = re.compile(r"[。！？!?；\n]")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9_.+#-]{1,}")
 
@@ -52,7 +52,8 @@ def merge_short(segments, min_chars=6, min_sec=1.5):
     """把碎段并成句，只用于挑摘要句子，不改 transcript。
 
     实测 13:47 的视频平均 1.6 秒/段、9.5 字/段，摘要要点全是「烤烟，烤烟」这种半句。
-    合并后 start 取第一段的 time，回查仍能定位到原文。
+    合并后 start 取第一段的 time、end 取最后一段的 time：回查按整块窗口判，
+    引用落在块的后半截也不会被当成编造删掉。
     """
     out, buf = [], None
     for s in segments:
@@ -105,15 +106,28 @@ def _bullets(items):
 
 
 def keywords(segments, rules, limit=8):
-    counts = {}
+    """拉丁词与词表命中计数；拉丁词不分大小写，显示最常出现的原始拼写。"""
+    counts, spell = {}, {}
     for seg in segments:
         text = seg.get("text") or ""
         for token in LATIN.findall(text):
-            counts[token] = counts.get(token, 0) + 1
+            key = token.lower()
+            counts[key] = counts.get(key, 0) + 1
+            spell.setdefault(key, {})
+            spell[key][token] = spell[key].get(token, 0) + 1
         for h in termrules.find_hits(text, rules):
-            counts[h["canonical"]] = counts.get(h["canonical"], 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
-    return ranked[:limit]
+            key = h["canonical"].lower()
+            counts[key] = counts.get(key, 0) + 1
+            spell.setdefault(key, {})
+            spell[key][h["canonical"]] = spell[key].get(h["canonical"], 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    out = []
+    for key, n in ranked[:limit]:
+        forms = spell.get(key) or {}
+        # 并列时取字典序小的拼写，保证两次构建字节一致
+        best = sorted(forms.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if forms else key
+        out.append((best, n))
+    return out
 
 
 def _pick(pool, used, n):
@@ -132,6 +146,19 @@ def _pick(pool, used, n):
         used.add(key)
         out.append(c)
     return out
+
+
+def _dubious(segments, low, n=5):
+    """全局最差 n 段（avg_logprob 最小），取完再按时间排好用于显示。
+
+    以前先取时间序前 5 段再排序，等于只报了「视频开头最差的几句」，
+    后半段真正听不清的地方反而进不了摘要。
+    """
+    picked = [s for i, s in enumerate(segments, 1) if i in low]
+    picked.sort(key=lambda s: (s.get("avg_logprob") if s.get("avg_logprob") is not None else 0.0))
+    picked = picked[:n]
+    picked.sort(key=lambda s: float(s["start"]))
+    return picked
 
 
 def extract(segments, meta, rules):
@@ -156,15 +183,19 @@ def extract(segments, meta, rules):
     for c in cands:
         buckets.setdefault(_bucket(c["start"]), []).append(c)
     # 不足两章就不出这一节：4 分钟的视频只有一个 00:00–05:00，内容必然和概览重复。
+    # 反过来说，一章都取不到内容时也不能只留个空标题——先把内容攒够再决定发不发标题。
+    chapter = []
     if len(buckets) >= 2:
-        lines.append("## 分章")
         for b in sorted(buckets):
             top = _pick(buckets[b], used, 2)
             if not top:
                 continue
-            lines.append("### %s–%s" % (_mmss(b * 300), _mmss((b + 1) * 300)))
-            lines.extend(_bullets(top))
-            lines.append("")
+            chapter.append("### %s–%s" % (_mmss(b * 300), _mmss((b + 1) * 300)))
+            chapter.extend(_bullets(top))
+            chapter.append("")
+    if chapter:
+        lines.append("## 分章")
+        lines.extend(chapter)
 
     lines.append("## 关键数字")
     nums = _pick([c for c in cands if any(ch.isdigit() for ch in c["text"])], used, 6)
@@ -177,8 +208,7 @@ def extract(segments, meta, rules):
     lines.append("")
 
     lines.append("## 存疑段")
-    dubious = [s for i, s in enumerate(segments, 1) if i in low][:5]
-    dubious.sort(key=lambda s: s.get("avg_logprob") or 0)
+    dubious = _dubious(segments, low)
     if dubious:
         for s in dubious:
             lines.append("- [%s] %s（avg_logprob %.2f）"
@@ -189,19 +219,26 @@ def extract(segments, meta, rules):
 
 
 def find_segment(sec, segments, tol=1.0, text=None):
-    """按 [mm:ss] 定位段。
+    """按 [mm:ss] 定位段；合并块按 [start - tol, end + tol] 整段窗口命中。
 
-    两道保险：
+    三道保险：
     1. 先找「秒数取整后完全相等」的段（`[mm:ss]` 就是 floor(start) 来的，
        分段长 1.3 秒时，前一段起点也可能落在 1 秒内，只按浮点距离会取错段、
        让真引用被当成编造删掉）；
-    2. 给 text 时优先挑「文本装得下它」的那段，再用距离排序兜底
+    2. sec 落在段的时间窗口内也算命中：merge_short 把好几段拼成一句之后，
+       引用常指向块的后半截，只比 start 会把真引用删光；
+    3. 给 text 时优先挑「文本装得下它」的那段，再用距离排序兜底
        （LLM 给的 sec 可能不准，文本对得上才是硬证据）。
     """
     want = int(max(0.0, float(sec)))
-    near = [s for s in segments
-            if int(max(0.0, float(s["start"]))) == want
-            or abs(float(s["start"]) - float(sec)) <= tol]
+    if not segments:
+        return None
+    near = []
+    for s in segments:
+        start = float(s["start"])
+        end = max(start, float(s.get("end") or start))
+        if abs(start - float(sec)) <= tol or start - tol <= float(sec) <= end + tol:
+            near.append(s)
     if not near:
         return None
     exact = [s for s in near if int(max(0.0, float(s["start"]))) == want]
@@ -216,22 +253,74 @@ def find_segment(sec, segments, tol=1.0, text=None):
     return near[0]
 
 
-def verify(md, segments):
-    """删掉回查不过的要点。返回 (新文本, 删除条数, 被删条目)。"""
+def bullet_sec(match):
+    """`[mm:ss]` / `[H:MM:SS]` 两种时间戳都折成秒。"""
+    a, b, c = match.group(2), match.group(3), match.group(4)
+    if c is None:
+        return int(a) * 60 + int(b)
+    return int(a) * 3600 + int(b) * 60 + int(c)
+
+
+def verify(md, segments, fallback=None):
+    """删掉回查不过的要点。返回 (新文本, 删除条数, 被删条目)。
+
+    segments 应与喂给模型的原文同粒度（build 传 merge_short 的合并块）；
+    fallback 再给一份原始段，合并块里定位不到时兜底。
+    """
     out, bad = [], []
     for line in md.splitlines():
         m = BULLET.match(line)
         if not m:
             out.append(line)
             continue
-        text, mm, ss = m.group(1), m.group(2), m.group(3)
-        want = int(mm) * 60 + int(ss)
+        text = m.group(1)
+        want = bullet_sec(m)
         seg = find_segment(want, segments, text=text)
+        if (seg is None or norm(text) not in norm(seg.get("text") or "")) and fallback:
+            seg = find_segment(want, fallback, text=text)
         if seg is None or norm(text) not in norm(seg.get("text") or ""):
             bad.append(line)
             continue
         out.append(line)
     return "\n".join(out).rstrip() + "\n", len(bad), bad
+
+
+def _heading_level(line):
+    m = re.match(r"^(#{2,6}) ", line)
+    return len(m.group(1)) if m else 0
+
+
+def prune_empty(md):
+    """删掉没有任何内容的标题：空的 `## 分章`/`## 要点` 比没有更难看。
+
+    标题只在同一级或更高级标题之前找内容，`### 小标题` 不算 `## 分章` 的内容；
+    一轮下来子标题被删，下一轮父标题也就空了，所以要循环到稳定。
+    """
+    lines = md.splitlines()
+    changed = True
+    while changed:
+        changed = False
+        keep, i = [], 0
+        while i < len(lines):
+            lv = _heading_level(lines[i])
+            if lv:
+                j = i + 1
+                while j < len(lines) and (_heading_level(lines[j]) == 0
+                                          or _heading_level(lines[j]) > lv):
+                    j += 1
+                if not [x for x in lines[i + 1:j] if x.strip()]:
+                    changed = True
+                    i += 1
+                    continue
+            keep.append(lines[i])
+            i += 1
+        lines = keep
+    out = []
+    for line in "\n".join(lines).rstrip().splitlines():
+        if not line.strip() and out and not out[-1].strip():
+            continue
+        out.append(line)
+    return "\n".join(out).rstrip() + "\n"
 
 
 def chunks(segments, limit=CHUNK_CHARS):
@@ -287,7 +376,7 @@ def _parse_reply(content):
     return {"overview": overview, "bullets": bullets}
 
 
-def _llm_ask(chunk, base_url, model, timeout):
+def _llm_ask(chunk, base_url, model, timeout, key=None):
     """对一块逐字稿问一次；返回 (reply, error)，reply 为 None 时 error 说明原因。
 
     原因要留住：摘要退回抽取式时得能告诉用户到底是没开服务、模型名不对，
@@ -297,8 +386,12 @@ def _llm_ask(chunk, base_url, model, timeout):
     prompt = (ASK_TEMPLATE % MAX_BULLETS) + "\n".join(lines)
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
                        "temperature": 0}, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if key:
+        # OpenAI / DeepSeek 这类云端模型没有 Authorization 直接 401；本地 Ollama 不校验它
+        headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", "replace"))
@@ -318,7 +411,7 @@ def _llm_ask(chunk, base_url, model, timeout):
     return reply, None
 
 
-def llm_bullets(segments, base_url, model, timeout=90, errors=None):
+def llm_bullets(segments, base_url, model, timeout=90, errors=None, key=None):
     """分块调 /chat/completions，返回 (bullets, overview, 失败块数, 总块数)。
 
     单块失败不影响其他块；全部失败返回 (None, None, n, n)，由 build 退回抽取式。
@@ -329,7 +422,7 @@ def llm_bullets(segments, base_url, model, timeout=90, errors=None):
     parts = chunks(segments)
     got, overviews, failed = [], [], 0
     for chunk in parts:
-        reply, err = _llm_ask(chunk, base_url, model, timeout)
+        reply, err = _llm_ask(chunk, base_url, model, timeout, key)
         if reply:
             got.extend(reply["bullets"])
             if reply.get("overview"):
@@ -351,11 +444,28 @@ def llm_bullets(segments, base_url, model, timeout=90, errors=None):
     return (merged[:MAX_BULLETS] or None), overview, failed, len(parts)
 
 
-def render_llm(bullets, overview, segments, meta, model):
+OVERVIEW_TS = re.compile(r"[\[【(（](\d{1,3}):(\d{2})[\]】)）]")
+
+
+def overview_supported(overview, segments):
+    """综述里的 [mm:ss] 必须对得上某一段原文。
+
+    综述是模型改写，逐字回查管不到它；但「在 12:30 提到」这种引证一旦编造，
+    读的人没法分辨。所以只留一条硬规矩：时间引用对不上原文，整段综述不要。
+    """
+    for m in OVERVIEW_TS.finditer(overview):
+        sec = int(m.group(1)) * 60 + int(m.group(2))
+        if find_segment(sec, segments) is None:
+            return False
+    return True
+
+
+def render_llm(bullets, overview, segments, meta, model, warnings=None):
     """LLM 摘要：综述（允许改写、不带时间戳）+ 要点（必须过回查门）。
 
     两级是刻意的：改写型结论一定不是原文子串，混在同一个格式里只会被回查门删光。
     分开之后，能引用的部分保持可核对，能读的部分不被删。
+    综述里对不上原文的 [mm:ss] 会让整段综述被丢掉，warnings 里记一条。
     """
     title = meta.get("title") or "（未命名）"
     duration = meta.get("duration_sec")
@@ -365,11 +475,14 @@ def render_llm(bullets, overview, segments, meta, model):
                  % (stamp, len(segments), sum(len(s["text"]) for s in segments), model or "unknown"))
     lines.append("")
     if overview:
-        lines.append("## 一句话")
-        lines.append(overview)
-        lines.append("")
-        lines.append("> 本段是模型改写，未经逐字校验；引用请以「要点」和 transcript.md 为准。")
-        lines.append("")
+        if overview_supported(overview, segments):
+            lines.append("## 一句话")
+            lines.append(overview)
+            lines.append("")
+            lines.append("> 本段是模型改写，未经逐字校验；引用请以「要点」和 transcript.md 为准。")
+            lines.append("")
+        elif warnings is not None:
+            warnings.append("LLM 综述里的时间引用在原文里找不到，整段已删除")
     if bullets:
         lines.append("## 要点（每条都能回查到原文）")
         for b in bullets:
@@ -377,12 +490,10 @@ def render_llm(bullets, overview, segments, meta, model):
             sec = seg["start"] if seg else b["sec"]
             lines.append("- %s [%s]" % (b["text"], _mmss(sec)))
         lines.append("")
-    low = meta.get("low_conf") or set()
-    dubious = [s for i, s in enumerate(segments, 1) if i in low]
+    dubious = _dubious(segments, meta.get("low_conf") or set())
     if dubious:
-        dubious.sort(key=lambda s: s.get("avg_logprob") or 0)
         lines.append("## 存疑段")
-        for s in dubious[:5]:
+        for s in dubious:
             lines.append("- [%s] %s（avg_logprob %.2f）"
                          % (_mmss(s["start"]), s["text"], s.get("avg_logprob") or 0))
         lines.append("")
@@ -390,7 +501,7 @@ def render_llm(bullets, overview, segments, meta, model):
 
 
 def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
-          rules=None):
+          rules=None, llm_key=None):
     """返回 (markdown, mode, bullets, dropped, warnings)。mode='none' 返回空文本。"""
     if mode == "none":
         return "", "none", 0, 0, []
@@ -400,9 +511,9 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
     if mode == "llm":
         errs = []
         items, overview, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown",
-                                                     errors=errs)
+                                                     errors=errs, key=llm_key)
         if items or overview:
-            md = render_llm(items or [], overview, segments, meta, llm_model)
+            md = render_llm(items or [], overview, segments, meta, llm_model, warnings)
             if failed:
                 warnings.append("LLM 摘要 %d/%d 块失败（%s），只用成功块"
                                 % (failed, total, errs[0] if errs else "原因未知"))
@@ -412,7 +523,9 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
             mode = "extractive"
     if md is None:
         md = extract(segments, meta, rules)
-    md, dropped, bad = verify(md, merge_short(segments))
+    # 喂给模型的是原始 segments，回查就得对着同粒度的合并块判，再拿原始段兜底
+    md, dropped, _bad = verify(md, merge_short(segments), fallback=segments)
+    md = prune_empty(md)
     if dropped:
         warnings.append("摘要 %d 条未通过回查，已删除" % dropped)
     bullets = sum(1 for line in md.splitlines() if BULLET.match(line))

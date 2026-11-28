@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "note": "术语表。canonical 是正确写法；variants[].surface 一律小写（匹配时大小写不敏感）。confidence=high 会被 vsum fix --apply 自动写盘，medium 只报不改，必须人工过目或显式 --apply-medium。confidence 是人工标签，不是概率：它只回答「这个写法要不要免检」，回答不了「这里到底是不是这个词」。与 canonical 只差大小写的写法（claude.md）可以写，修好后命中片段等于 canonical 会被跳过，幂等不受影响。unless 排除条件尚未接入，见 PROJECT.md 路线图。",
+ "note": "术语表。canonical 是正确写法；variants[].surface 一律小写（匹配时大小写不敏感）。confidence=high 会被 vsum fix --apply 自动写盘，medium 只报不改，必须人工过目或显式 --apply-medium。confidence 是人工标签，不是概率：它只回答「这个写法要不要免检」，回答不了「这里到底是不是这个词」。与 canonical 只差大小写的写法（claude.md）可以写，修好后命中片段等于 canonical 会被跳过，幂等不受影响。unless 排除条件尚未接入，见 README.md 的「已知限制」。",
  "terms": [
   {
    "canonical": "Claude",

@@ -3,7 +3,8 @@
 
 规则是**启发式**，不是实测数据：Pascal（cc 6.x）消费级卡 fp16 吞吐只有 1/64，
 所以走 int8_float32；cc>=7 且显存够才用 float16。真实速度以 `vsum bench` 为准。
-环境变量 WHISPER_DEVICE / WHISPER_COMPUTE 仍然优先，且不再被覆盖。
+环境变量 WHISPER_DEVICE / WHISPER_COMPUTE 仍然优先，但算出的 compute_type 要过设备
+校验：CPU 上不会被 GPU 判出的 float16 带崩。
 """
 import os
 import shutil
@@ -11,6 +12,13 @@ import subprocess
 
 # 显存(GB) 下限 -> 建议模型上限；仅用于 doctor 提示，不强制
 MODEL_CAP = ((4, "small"), (8, "medium"), (1 << 30, "large-v3"))
+
+# 各后端实际能加载的 compute_type；不在表里的值会在 resolve 里被纠正。
+# CPU 后端不认 float16/int8_float16，cuda 后端则都认（该表里只剩拼错的值会被拦）；
+# default/auto 交给 ctranslate2 自己按后端挑，两边都安全。
+CPU_COMPUTE = ("int8", "int8_float32", "float32", "default", "auto")
+CUDA_COMPUTE = ("float16", "int8_float16", "int8_bfloat16", "int8_float32", "bfloat16",
+                "float32", "int8", "int16", "default", "auto")
 
 
 def parse_smi(text):
@@ -103,7 +111,13 @@ def _cuda_runtime_present():
 
 
 def resolve(gpus=None, cuda_count=None):
-    """优先级：WHISPER_DEVICE / WHISPER_COMPUTE > 自动探测 > CPU 兜底。"""
+    """优先级：WHISPER_DEVICE / WHISPER_COMPUTE > 自动探测 > CPU 兜底。
+
+    两个变量可以各自覆盖，但 compute_type 必须和**最终** device 相容：只设
+    WHISPER_DEVICE=cpu 时若把 GPU 判出来的 float16 原样带过去，CPU 后端会拒绝加载，
+    现场只看到「模型加载失败（small / cpu / float16）」而看不出根因。顺序因此是
+    先定设备、再校验 compute；被纠正的值和原因都写进 reason（`vsum doctor` 会显示）。
+    """
     env_device = os.environ.get("WHISPER_DEVICE", "").strip()
     env_compute = os.environ.get("WHISPER_COMPUTE", "").strip()
     if gpus is None:
@@ -114,8 +128,27 @@ def resolve(gpus=None, cuda_count=None):
     auto = choose(gpus) if cuda_count else choose([])
     cfg = dict(auto)
     cfg["source"] = "auto"
-    if env_device or env_compute:
-        cfg["device"] = env_device or auto["device"]
-        cfg["compute_type"] = env_compute or auto["compute_type"]
-        cfg["source"] = "env"
+    if not (env_device or env_compute):
+        return cfg
+
+    notes = []
+    device = env_device or auto["device"]
+    if env_device:
+        notes.append("设备按 WHISPER_DEVICE=%s" % env_device +
+                     ("" if env_device == auto["device"] else "（自动探测为 %s）" % auto["device"]))
+    want = env_compute or auto["compute_type"]
+    valid = CPU_COMPUTE if device == "cpu" else CUDA_COMPUTE
+    if want in valid:
+        compute = want
+        if env_compute:
+            notes.append("compute 按 WHISPER_COMPUTE=%s" % env_compute)
+    else:
+        compute = "int8" if device == "cpu" else (
+            auto["compute_type"] if auto["compute_type"] in CUDA_COMPUTE else "float16")
+        notes.append("%s%s 在 %s 上不可用，改用 %s" %
+                     ("WHISPER_COMPUTE=" if env_compute else "自动判定的 ", want, device, compute))
+    cfg["device"] = device
+    cfg["compute_type"] = compute
+    cfg["source"] = "env"
+    cfg["reason"] = "；".join(notes + [auto["reason"]])
     return cfg

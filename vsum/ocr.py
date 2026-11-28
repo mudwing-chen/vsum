@@ -21,7 +21,9 @@ import subprocess
 import sys
 
 from . import phonetics
+from .pipeline import InputError
 from .timefmt import mmss
+from .transcribe import DependencyError
 
 TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{2,}")
 CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
@@ -272,7 +274,10 @@ def suggest(frame_text, transcript_vocab, threshold=0.8, phonetic_floor=0.6):
 
 
 def pick_times(segments, low_conf=None, every=None, times=None, limit=24):
-    """挑要抽帧的秒数：显式 > 低置信段 > 含拉丁词段 > 均匀采样；去重、限量。"""
+    """挑要抽帧的秒数：--times 显式点 > --every 均匀采样 > 低置信段 > 含拉丁词段；去重、限量。
+
+    --every 是用户明确要的采样节奏，先铺满；剩下的名额才按低置信和拉丁词补。
+    """
     picks = []
 
     def add(t):
@@ -306,7 +311,7 @@ def extract_frames(video, times, out_dir, quality=3):
     """按秒抽帧，返回 [(秒, 路径)]。失败的时间点直接跳过，不中断。"""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        raise RuntimeError("没找到 ffmpeg")
+        raise DependencyError("没找到 ffmpeg")
     frame_dir = os.path.join(out_dir, "frames")
     os.makedirs(frame_dir, exist_ok=True)
     made = []
@@ -327,7 +332,7 @@ def _engine():
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as exc:
-        raise RuntimeError(
+        raise DependencyError(
             "没有 OCR 引擎：pip install 'vsum[ocr]'（rapidocr-onnxruntime）。"
             "装不上也没关系，vsum 的其他功能不依赖它。原始错误：%s" % exc)
     ocr = RapidOCR()
@@ -383,7 +388,7 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
 
     frames = extract_frames(video, picks, out_dir)
     if not frames:
-        raise RuntimeError("一帧都没抽出来（ffmpeg 失败或时间点越界）")
+        raise InputError("一帧都没抽出来（ffmpeg 失败或时间点越界）")
 
     read, engine = _engine()
 

@@ -10,6 +10,7 @@ clip：按时间点把原视频那一段剪出来（默认前后各留 1.5 秒�
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,18 +36,36 @@ def load_segments(path):
     return segs, base
 
 
+_PLAIN = re.compile(r"^\d+(?:\.\d+)?$")
+_MMSS = re.compile(r"^(\d+):(\d{1,2}(?:\.\d+)?)$")
+_HMS = re.compile(r"^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$")
+
+
 def parse_time(text):
-    """'03:41' / '3:41.5' / '221.5' / '1:02:03' -> 秒。"""
+    """'03:41' / '3:41.5' / '221.5' / '1:02:03' -> 秒。
+
+    mm:ss 的秒和 h:mm:ss 的分钟、秒都必须落在 0–59；负数和畸形输入一律拒绝，
+    免得 '1:75' 被悄悄当成 135 秒。
+    """
     text = str(text).strip()
     if not text:
         raise ValueError("空的 time")
-    parts = text.split(":")
-    if len(parts) > 3:
-        raise ValueError("时间格式不对：%s（用 mm:ss 或秒数）" % text)
-    total = 0.0
-    for p in parts:
-        total = total * 60 + float(p)
-    return total
+    if _PLAIN.match(text):
+        return float(text)
+    m = _MMSS.match(text)
+    if m:
+        seconds = float(m.group(2))
+        if seconds >= 60:
+            raise ValueError("秒必须小于 60：%s" % text)
+        return int(m.group(1)) * 60 + seconds
+    m = _HMS.match(text)
+    if m:
+        minutes = int(m.group(2))
+        seconds = float(m.group(3))
+        if minutes >= 60 or seconds >= 60:
+            raise ValueError("分钟和秒都必须小于 60：%s" % text)
+        return int(m.group(1)) * 3600 + minutes * 60 + seconds
+    raise ValueError("时间格式不对：%s（用 mm:ss 或秒数）" % text)
 
 
 def search(segments, terms, limit=20):

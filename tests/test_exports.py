@@ -41,7 +41,7 @@ check("srt 时间格式", all(SRT_TS.match(l) for l in srt.splitlines() if "-->"
 check("vtt 头", vtt.startswith("WEBVTT"))
 check("vtt 时间格式", all(VTT_TS.match(l) for l in vtt.splitlines() if "-->" in l))
 check("plain 是纯文本", plain == "\n".join(s["text"] for s in SEGS), plain[:40])
-check("md 段首时间戳", "[00:00]" in md and "[00:15]" in md, md[:120])
+check("md 段首时间戳", "[00:00]" in md and "[00:16]" in md, md[:120])
 check("长 cue 被标出", warnings["long_cues"] == [3], warnings)
 check("无空段", warnings["empty_segments"] == 0, warnings)
 check("clean 去口水词", clean.clean_text("嗯，最后一句。") == "最后一句。", clean.clean_text("嗯，最后一句。"))
@@ -101,6 +101,84 @@ proc = subprocess.run([sys.executable, "-m", "vsum", "export",
 check("export 子命令退出 0", proc.returncode == 0, proc.stderr)
 check("export 子命令产物", os.path.exists(os.path.join(tmp, "cli", "transcript.srt")))
 check("export 子命令写出处", os.path.exists(os.path.join(tmp, "cli", "export.source.json")))
+
+# 舍入与小时格式：md 与 srt 必须是同一套规则（md 走 mmss，srt 走毫秒）
+from vsum.timefmt import mmss  # noqa: E402
+
+check("mmss 四舍五入到秒", mmss(59.9996) == "01:00", mmss(59.9996))
+check("mmss 满一小时给小时", mmss(3725) == "1:02:05", mmss(3725))
+check("mmss 一小时整", mmss(3600) == "1:00:00", mmss(3600))
+check("mmss 不足一小时只给 mm:ss", mmss(3599) == "59:59", mmss(3599))
+check("mmss 负数按 0", mmss(-3) == "00:00", mmss(-3))
+
+edge = [{"start": 59.9996, "end": 61.5, "text": "刚好一分钟"},
+        {"start": 3725.0, "end": 3726.0, "text": "一小时零两分"}]
+md_edge = export.to_md(edge)
+check("md 59.9996 进位到 [01:00]", "[01:00]" in md_edge, md_edge)
+check("md 超过一小时带小时位", "[1:02:05]" in md_edge, md_edge)
+srt_edge = export.to_srt(edge)
+check("srt 59.9996 进位", "00:01:00,000 --> 00:01:01,500" in srt_edge, srt_edge)
+check("srt 超过一小时", "01:02:05,000 --> 01:02:06,000" in srt_edge, srt_edge)
+
+
+# 低置信：并列同分同进退，不按索引切
+def _segs(vals):
+    return [{"start": float(i), "end": float(i) + 1.0, "text": "段%d" % i, "avg_logprob": v}
+            for i, v in enumerate(vals, 1)]
+
+
+tie_vals = ([-0.90] * 6 + [-0.70] * 14 + [-0.50] * 23 + [-0.40] * 20 +
+            [-0.30] * 30 + [-0.25] * 20 + [-0.22] * 18 + [-0.21] * 12)
+check("并列表是 8 个不同值 / 143 段", len(tie_vals) == 143 and len(set(tie_vals)) == 8)
+low = export.low_conf_indexes(_segs(tie_vals))
+check("并列整组带上（6 + 14）", len(low) == 20, sorted(low))
+check("并列组不按索引切半", low == set(range(1, 21)), sorted(low))
+
+cap_vals = [-0.90] * 8 + [-0.60] * 200 + [-0.10] * 192
+low = export.low_conf_indexes(_segs(cap_vals))
+check("并列超过 25% 时退回上一档", low == set(range(1, 9)), sorted(low))
+check("全并列不整片标满", export.low_conf_indexes(_segs([-0.9] * 40)) == set())
+
+short_ok = _segs([-0.05, -0.02, -0.08])
+check("短片全是好值时不硬标第一段", export.low_conf_indexes(short_ok) == set(),
+      export.low_conf_indexes(short_ok))
+check("短片里真的差才标", export.low_conf_indexes(_segs([-0.02, -0.55, -0.03])) == {2})
+
+# demo 只有第 3 段（avg_logprob -0.9）真的差；计数必须和 ⚠ 数一致
+md_meta = export.to_md(SEGS, meta={"title": "demo"})
+yaml_count = int(re.search(r"^low_conf_segments: (\d+)$", md_meta, re.M).group(1))
+check("md low_conf 计数等于 ⚠ 数", yaml_count == md_meta.count("⚠"),
+      (yaml_count, md_meta.count("⚠")))
+check("demo 只标最差那段", yaml_count == 1 and "[00:06] ⚠" in md_meta, (yaml_count, md_meta[:600]))
+
+# 负起点被夹到 0 之后，原本从 0 开始的下一句会压在它身上：播放器里会闪
+overlap = [
+    {"start": -1.0, "end": 1.5, "text": "开头被裁掉"},
+    {"start": 0.0, "end": 0.5, "text": "压在它身上"},
+]
+fixed, overlap_warn = export.sanitize(overlap)
+check("夹时间后不产生重叠 cue", fixed[1]["start"] >= fixed[0]["end"],
+      [(c["start"], c["end"]) for c in fixed])
+check("重叠修正被记录", "overlap_after_fix" in [x["reason"] for x in overlap_warn],
+      overlap_warn)
+
+# ⚠ 必须和 result.counts.low_conf 同源：空段被 sanitize 丢掉后不能把 ⚠ 挪到别的段上
+mixed = [
+    {"start": 0.0, "end": 2.0, "text": "第一句正常", "avg_logprob": -0.2},
+    {"start": 2.0, "end": 3.0, "text": "", "avg_logprob": -1.4},
+    {"start": 3.0, "end": 5.0, "text": "第三句也正常", "avg_logprob": -0.1},
+]
+raw_low = export.low_conf_indexes(mixed)
+check("空段也在低置信集合里", raw_low == {2}, raw_low)
+out_mixed = mkdtemp()
+export.export_all(mixed, out_mixed, meta={"low_conf": raw_low})
+md_mixed = open(os.path.join(out_mixed, "transcript.md"), encoding="utf-8").read()
+check("丢掉空段后不留错位的 ⚠", "⚠" not in md_mixed, md_mixed)
+check("low_conf_segments 与实际 ⚠ 一致", "low_conf_segments: 0" in md_mixed, md_mixed[:400])
+
+# 清洗稿是「额外一版」：不该带术语附录（它不改词表）
+clean_md_text = clean.clean_md(SEGS)
+check("清洗稿不带术语修订附录", "## 术语修订" not in clean_md_text, clean_md_text[-120:])
 
 if FAIL:
     for f in FAIL:

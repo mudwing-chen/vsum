@@ -108,7 +108,7 @@ def run(root, out_path="term-audit.md", json_path="term-audit.json", top=30, ter
     shape = []
     for vid, path, lines in videos:
         for sec, text in lines:
-            for m in re.finditer(r"(?i)\b(gpt|claude|iphone|macbook|m|v|sora|gemini)\s+([0-9]{1,2}(?:\.[0-9])?)\b", text):
+            for m in re.finditer(r"(?i)(?<![A-Za-z0-9_'’])(gpt|claude|iphone|macbook|m|v|sora|gemini)\s*([0-9]{1,2}(?:\.[0-9])?)(?![A-Za-z0-9_])", text):
                 shape.append({"detector": "shape", "video": vid, "file": path, "sec": sec,
                               "found": m.group(0), "suggest": "%s-%s" % (m.group(1), m.group(2))})
 

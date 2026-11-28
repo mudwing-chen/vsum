@@ -12,14 +12,21 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-DOUYIN = re.compile(r"(douyin\.com|iesdouyin\.com)")
-BILI = re.compile(r"(bilibili\.com|b23\.tv)")
-YT = re.compile(r"(youtube\.com|youtu\.be)")
+# 域名表：只认「host 等于域名或是它的子域」，别用子串匹配（notyoutube.com 不是 YouTube）
+HOSTS = (
+    ("douyin", ("douyin.com", "iesdouyin.com")),
+    ("bilibili", ("bilibili.com", "b23.tv")),
+    ("youtube", ("youtube.com", "youtu.be")),
+)
+
+# 小到这个程度的「视频」肯定是错误页/半截文件
+MIN_BYTES = 64 * 1024
 
 # 页面内调 detail 接口时要带的参数（从线上请求抄的，缺一个就可能被风控）
 DETAIL_JS = """
@@ -47,13 +54,28 @@ class FetchError(RuntimeError):
     """抓取失败（URL 不认识、风控、直链过期）。CLI 映射成退出码 4。"""
 
 
+def _host_of(url):
+    """取 host（小写、去掉端口和末尾的点）。没写 scheme 的裸字符串也尽量认。"""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "//" + raw
+    try:
+        host = urllib.parse.urlparse(raw).hostname or ""
+    except ValueError:
+        return ""
+    return host.lower().rstrip(".")
+
+
 def detect(url):
-    if DOUYIN.search(url):
-        return "douyin"
-    if BILI.search(url):
-        return "bilibili"
-    if YT.search(url):
-        return "youtube"
+    host = _host_of(url)
+    if not host:
+        return None
+    for kind, domains in HOSTS:
+        for domain in domains:
+            if host == domain or host.endswith("." + domain):
+                return kind
     return None
 
 
@@ -99,33 +121,65 @@ def _pick_play_url(detail):
     return addr[0] if addr else None
 
 
+def _looks_like_html(head, content_type=""):
+    """风控/错误页常常是 200 + HTML：Content-Type 说是 html，或正文以 '<' 开头。"""
+    if content_type and "html" in content_type.lower():
+        return True
+    return head.lstrip()[:1] == b"<"
+
+
+def _check_downloaded(total, head, content_type=""):
+    """落盘前校验：空的 / 太小 / 是 HTML 页面的都不算视频。"""
+    if total <= 0:
+        raise FetchError("下载结果是空文件")
+    if _looks_like_html(head, content_type):
+        raise FetchError("下载结果是 HTML 页面（多半撞上风控了），不是视频")
+    if total < MIN_BYTES:
+        raise FetchError("下载结果只有 %d 字节，不像视频" % total)
+
+
 def _download(url, path, referer="https://www.douyin.com/", attempts=2):
-    """直链下载。play_addr 有时效，失败一次就删半截文件重试一次。"""
+    """直链下载：先写 path.part，校验通过再原子替换。
+
+    之前是直接 open(path, "wb") + 失败删除，一次 403/直链过期就会把上一次
+    已经下好的 video.mp4 抹掉。现在失败只删 .part，旧文件一动不动。
+    """
+    tmp = path + ".part"
     last = None
     for attempt in range(1, attempts + 1):
         total = 0
+        head = b""
+        content_type = ""
         try:
-            with _http_get(url, referer=referer, timeout=60) as r, open(path, "wb") as fh:
-                while True:
-                    chunk = r.read(1 << 16)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    total += len(chunk)
-                    if total % (1 << 22) < (1 << 16):
-                        print("  已下载 %.1f MB" % (total / 1048576.0), flush=True)
+            with _http_get(url, referer=referer, timeout=60) as r:
+                headers = getattr(r, "headers", None)
+                if headers is not None:
+                    content_type = headers.get("Content-Type") or ""
+                with open(tmp, "wb") as fh:
+                    while True:
+                        chunk = r.read(1 << 16)
+                        if not chunk:
+                            break
+                        if len(head) < 64:
+                            head += chunk[:64 - len(head)]
+                        fh.write(chunk)
+                        total += len(chunk)
+                        if total % (1 << 22) < (1 << 16):
+                            print("  已下载 %.1f MB" % (total / 1048576.0), flush=True)
+            _check_downloaded(total, head, content_type)
+            os.replace(tmp, path)
             return total
         except Exception as exc:
             last = exc
-            if os.path.exists(path):
+            if os.path.exists(tmp):
                 try:
-                    os.remove(path)
+                    os.remove(tmp)
                 except OSError:
                     pass
             if attempt < attempts:
                 print("  下载失败（%s），1 秒后重试一次" % exc, flush=True)
                 time.sleep(1)
-    raise FetchError("直链下载失败（可能已过期，重跑一次即可）：%s" % last)
+    raise FetchError("直链下载失败：%s（play_addr 可能已过期，重跑一次即可；已有的视频文件未动）" % last)
 
 
 def _probe_duration(path):
@@ -135,6 +189,57 @@ def _probe_duration(path):
         return pipeline.probe_duration(path)
     except Exception:
         return None
+
+
+def _reusable(out_dir, url):
+    """这个输出目录里已经有同一个链接下好的视频 → 返回 play.json 内容，否则 None。
+
+    判据要三条都成立，缺一条就老老实实重下：play.json 记的是这个 URL、
+    它指的视频文件还在、而且不是半截文件。
+    """
+    play_path = os.path.join(out_dir, "play.json")
+    if not os.path.exists(play_path):
+        return None
+    try:
+        with open(play_path, encoding="utf-8") as fh:
+            prev = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(prev, dict):
+        return None
+    if (prev.get("source_url") or "").strip() != (url or "").strip():
+        return None
+    video = prev.get("video")
+    if not video or not os.path.exists(video):
+        return None
+    try:
+        if os.path.getsize(video) < MIN_BYTES:
+            return None
+    except OSError:
+        return None
+    return prev
+
+
+def _reuse_result(prev, url, out_dir):
+    """复用上一次的下载结果：刷新大小/时长（都很便宜），重写 play.json。"""
+    video = prev["video"]
+    prev["videoBytes"] = os.path.getsize(video)
+    probed = _probe_duration(video)
+    if probed is not None:
+        prev["probeSec"] = probed
+    prev["source_url"] = url
+    prev["outDir"] = out_dir
+    prev["reused"] = True
+    prev.setdefault("warnings", [])
+    _write_play_json(out_dir, prev)
+    print("复用上次的视频：%s（%.1f MB，跳过浏览器和下载；要重下加 --force）"
+          % (video, prev["videoBytes"] / 1048576.0), flush=True)
+    return prev
+
+
+def _write_play_json(out_dir, result):
+    with open(os.path.join(out_dir, "play.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=1)
 
 
 def _fetch_detail(driver, url, final_url, aid):
@@ -151,16 +256,26 @@ def _fetch_detail(driver, url, final_url, aid):
     return raw, page_url, aid
 
 
-def douyin(url, out_dir, browser=None, dry_run=False, headless=None, profile=None):
-    """返回 dict（写进 play.json）。dry_run 时只打印计划，不起浏览器。"""
+def douyin(url, out_dir, browser=None, dry_run=False, headless=None, profile=None, force=False):
+    """返回 dict（写进 play.json）。dry_run 时只打印计划，不起浏览器。
+
+    force=False 且 out_dir 里已经有这个链接下好的视频时，连浏览器都不起。
+    """
     from . import browser as browser_mod
 
-    final_url = resolve_redirect(url)
-    aid = aweme_id_of(final_url)
     if dry_run:
+        final_url = resolve_redirect(url)
+        aid = aweme_id_of(final_url)
         return {"ok": True, "dry_run": True, "kind": "douyin", "url": final_url, "awemeId": aid,
                 "browser": browser or "auto",
                 "note": "默认起可见窗口过风控；--headless 是可选加速"}
+    if not force:
+        prev = _reusable(out_dir, url)
+        if prev:
+            return _reuse_result(prev, url, out_dir)
+
+    final_url = resolve_redirect(url)
+    aid = aweme_id_of(final_url)
     if not aid:
         raise FetchError("从 URL 里没认出视频 id：%s（短链可能没跳转成功，换成 www.douyin.com/video/<id>）" % final_url)
 
@@ -212,6 +327,11 @@ def douyin(url, out_dir, browser=None, dry_run=False, headless=None, profile=Non
     }
 
 
+def _outtmpl(out_dir):
+    """yt-dlp 的 outtmpl 会展开 %-序列：目录里的 % 必须写成 %%，只转义目录部分。"""
+    return os.path.join(out_dir.replace("%", "%%"), "video.%(ext)s")
+
+
 def ytdlp(url, out_dir, dry_run=False):
     if dry_run:
         have = shutil.which("yt-dlp")
@@ -226,12 +346,14 @@ def ytdlp(url, out_dir, dry_run=False):
         import yt_dlp
     except ImportError as exc:
         raise FetchError("没有 yt-dlp：pip install yt-dlp") from exc
-    outtmpl = os.path.join(out_dir, "video.%(ext)s")
+    outtmpl = _outtmpl(out_dir)
     opts = {
         "outtmpl": outtmpl,
         "quiet": False,
         "noprogress": False,
         "retries": 3,
+        # 带播放列表的链接只下当前这一个视频，别顺着列表把整个合集拉下来
+        "noplaylist": True,
         "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
         "merge_output_format": "mp4",
     }
@@ -251,16 +373,23 @@ def ytdlp(url, out_dir, dry_run=False):
             "video": path}
 
 
-def run(url, out_dir, browser=None, dry_run=False, headless=None, profile=None):
+def run(url, out_dir, browser=None, dry_run=False, headless=None, profile=None, force=False):
+    """抓取入口。force=False 时同一个链接重跑会复用 out_dir 里已有的视频。"""
     kind = detect(url)
+    if kind is None:
+        # 先认链接再建目录：不认识的链接不该在磁盘上留一个空目录
+        raise FetchError("不认识的链接：%s（支持抖音 / B站 / YouTube）" % url)
     if not dry_run:
         os.makedirs(out_dir, exist_ok=True)
-    if kind is None:
-        raise FetchError("不认识的链接：%s（支持抖音 / B站 / YouTube）" % url)
+
+    if not dry_run and not force:
+        prev = _reusable(out_dir, url)
+        if prev:
+            return _reuse_result(prev, url, out_dir)
 
     if kind == "douyin":
         result = douyin(url, out_dir, browser=browser, dry_run=dry_run,
-                        headless=headless, profile=profile)
+                        headless=headless, profile=profile, force=force)
         if dry_run:
             print("计划：%s → %s（浏览器 %s）" % (url, out_dir, result["browser"]))
             print("注意：默认弹可见窗口；headless 可能被风控，失败就去掉 --headless")
@@ -272,11 +401,11 @@ def run(url, out_dir, browser=None, dry_run=False, headless=None, profile=None):
         result["video"] = video
         result["videoBytes"] = size
         result["probeSec"] = probed
+        result["source_url"] = url
         if probed and result["durationSec"] and abs(probed - result["durationSec"]) > 1.0:
             result["warnings"].append("时长不一致：接口 %.1fs vs 文件 %.1fs（文件已落盘，继续用）"
                                       % (result["durationSec"], probed))
-        with open(os.path.join(out_dir, "play.json"), "w", encoding="utf-8") as fh:
-            json.dump(result, fh, ensure_ascii=False, indent=1)
+        _write_play_json(out_dir, result)
         print("完成：%s（%.1f MB，%.1fs）" % (video, size / 1048576.0, probed or 0))
         return result
 
@@ -286,7 +415,8 @@ def run(url, out_dir, browser=None, dry_run=False, headless=None, profile=None):
         if video and os.path.exists(video):
             result["videoBytes"] = os.path.getsize(video)
             result["probeSec"] = _probe_duration(video)
-        with open(os.path.join(out_dir, "play.json"), "w", encoding="utf-8") as fh:
-            json.dump(result, fh, ensure_ascii=False, indent=1)
+        result["source_url"] = url
+        result.setdefault("warnings", [])
+        _write_play_json(out_dir, result)
         print("完成：%s" % result.get("video", out_dir))
     return result

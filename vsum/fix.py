@@ -241,10 +241,11 @@ def main(argv=None):
         return 0
     out = args.json or os.path.join(args.path if os.path.isdir(args.path) else os.path.dirname(args.path), "corrections.json")
     if not total:
-        # 同 fixed：上一轮的清单在零命中之后就是过期产物，留着会和「什么都没改」矛盾
+        # corrections.json 是「输入」不是「产物」：手写清单（顶层 corrections 格式，
+        # pipeline.load_corrections 明确支持）和上一轮 fix 写的清单长得一模一样，
+        # 删掉就等于删用户数据。只提示，不动文件。
         if os.path.exists(out):
-            os.remove(out)
-            print("没有需要改的，不写 corrections.json；删除过期产物 %s" % os.path.basename(out))
+            print("没有需要改的，保留已有 %s（若是过期清单，请自行删除）" % out)
         else:
             print("没有需要改的，不写 corrections.json。")
         return 0

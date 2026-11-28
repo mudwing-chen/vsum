@@ -31,9 +31,3 @@ def to_simplified(text):
         return text
     table = _load()
     return "".join(table.get(ch, ch) for ch in text)
-
-
-def traditional_chars(text):
-    """返回 text 里会被转换的字数（用来在 manifest 里记一笔）。"""
-    table = _load()
-    return sum(1 for ch in text or "" if ch in table)

@@ -24,7 +24,12 @@ def ffmpeg_path():
 
 
 def probe_duration(path):
-    """ffprobe 优先；没有就退到 PyAV（macOS 上装 ffmpeg 常常不带 ffprobe）。"""
+    """ffprobe 优先；wav 直接读头（零依赖）；最后退到 PyAV。
+
+    macOS 上用 brew 装的 ffmpeg 常常不带 ffprobe，而 vsum 自己的 audio.wav 一定是
+    ffmpeg 转出来的 16k 单声道 PCM——读它是纯 stdlib 的事，没必要因为缺 ffprobe
+    就让 manifest 的时长永远是 null。
+    """
     probe = shutil.which("ffprobe")
     if probe:
         try:
@@ -32,6 +37,16 @@ def probe_duration(path):
                                   "-of", "default=nk=1:nw=1", path],
                                  capture_output=True, text=True, timeout=30)
             return round(float(out.stdout.strip()), 2)
+        except Exception:
+            pass
+    if str(path).lower().endswith(".wav"):
+        try:
+            import wave
+
+            with wave.open(path, "rb") as w:
+                rate = w.getframerate()
+                if rate:
+                    return round(w.getnframes() / float(rate), 2)
         except Exception:
             pass
     try:
@@ -94,16 +109,24 @@ def ensure_audio(src, out_dir):
            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not os.path.exists(wav):
-        raise tr.DependencyError("ffmpeg 抽音频失败：%s" % (proc.stderr.strip()[:300] or "exit %d" % proc.returncode))
+        # 走到这里说明 ffmpeg 在（不在的话 ffmpeg_path() 已经报了依赖错误），
+        # 失败原因是这个输入：损坏、或者根本不是音视频。算输入问题（2），不是缺依赖（3）。
+        raise InputError("ffmpeg 抽不出音频：%s（%s）"
+                         % (src, proc.stderr.strip()[:300] or "exit %d" % proc.returncode))
     return wav
 
 
-def segments_reusable(out_dir, src, model, force=False, language=None, context=None):
+def segments_reusable(out_dir, src, model, force=False, language=None, context=None,
+                      words=None, pack=None, decode_opts=None):
     """转写复用条件：manifest 在、输入 sha 一致、segments 非空、**解码参数全一致**、没给 --force。
 
     只比模型名是不够的：换 language / condition_on_previous_text 都会改变输出。
     以前这里漏了这两项，于是 `--lang en` 会静默复用中文转写，再把 md 头写成
     `language: en` —— 产物自己和自己打架。宁可重跑，也不要作假。
+
+    --words / 热词内容 / WHISPER_PROMPT 同理：带 --words 重跑却复用没有词级时间戳的
+    旧稿，比多花十分钟更糟。这些由 transcribe.config_digest() 的指纹统一覆盖；
+    0.6 之前的 manifest 没有指纹，就退回逐项比当时记下来的那几项。
     """
     if force:
         return False, None, "指定了 --force"
@@ -122,9 +145,28 @@ def segments_reusable(out_dir, src, model, force=False, language=None, context=N
             return False, None, "上次用的模型是 %s，这次要 %s" % (decode.get("model"), model)
         if language is not None and decode.get("language") != language:
             return False, None, "上次的语言是 %s，这次要 %s" % (decode.get("language"), language)
-        if context is not None and bool(decode.get("condition_on_previous_text")) != bool(context):
-            return False, None, "上次 context=%s，这次要 %s" % (
-                bool(decode.get("condition_on_previous_text")), bool(context))
+        stored = decode.get("config_sha256")
+        if stored:
+            # 新 manifest 由指纹统一判：批推理下 manifest 记的 context 是 False（实际生效值），
+            # 不能拿命令行的 True 去比，否则每次带 --batch-size 都判成「变了」。
+            opts = decode_opts or {}
+            if stored != tr.config_digest(
+                    language, terms_path=pack, words=words, context=context,
+                    batch_size=opts.get("batch_size", 1),
+                    vad_options=opts.get("vad_options"),
+                    chunk_length=opts.get("chunk_length")):
+                return False, None, "解码参数变了（--words / 热词 / 批大小 / VAD / chunk 等）"
+        else:
+            # 0.6 之前的 manifest 没有指纹，退回逐项比当时记下来的那几项。
+            if context is not None and bool(decode.get("condition_on_previous_text")) != bool(context):
+                return False, None, "上次 context=%s，这次要 %s" % (
+                    bool(decode.get("condition_on_previous_text")), bool(context))
+            if words is not None and bool(decode.get("word_timestamps")) != bool(words):
+                return False, None, "上次 word_timestamps=%s，这次要 %s" % (
+                    bool(decode.get("word_timestamps")), bool(words))
+            prompt = tr.default_prompt(language)
+            if decode.get("initial_prompt") not in (None, prompt):
+                return False, None, "WHISPER_PROMPT 变了"
     except (OSError, ValueError, KeyError):
         return False, None, "manifest 读不了或不完整"
     try:
@@ -157,16 +199,25 @@ def load_corrections(out_dir):
 def run(src, out_dir, model="small", language="zh", pack=None,
         clean_mode=False, words=None, browser=None, fetch_only=False,
         headless=None, profile=None, summary_mode="extractive",
-        llm_url=None, llm_model=None, force=False, context=True, hints=True):
+        llm_url=None, llm_model=None, llm_key=None, force=False, context=True,
+        hints=True, decode_opts=None):
     t0 = time.time()
+    # --model auto 必须在复用判断之前解析：manifest 里记的是具体模型名。
+    model = tr.resolve_model(model)
+    opts = tr.decode_options(decode_opts)
+    # CPU 上批推理没有意义，先折成 1 再算指纹；否则 --batch-size 4 与 1 会算出
+    # 两个不同的 config_sha256，下次换回默认值就白重转一遍。
+    if opts.get("batch_size") != 1:
+        hw = tr.hardware.resolve()
+        opts["batch_size"] = tr.resolve_batch_size(opts["batch_size"], hw["device"], hw)
     source_url = None
     title = None
     fetch_warnings = []
     if src.startswith(("http://", "https://")):
         from . import fetch as fetch_mod
-        os.makedirs(out_dir, exist_ok=True)
+        # 目录留给 fetch 自己建：它要先认链接类型，不认识的链接不该留下空目录
         info = fetch_mod.run(src, out_dir, browser=browser,
-                             headless=headless, profile=profile)
+                             headless=headless, profile=profile, force=force)
         source_url = src
         title = info.get("title")
         fetch_warnings = list(info.get("warnings") or [])
@@ -180,20 +231,32 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         raise InputError("找不到输入文件：%s" % src)
     os.makedirs(out_dir, exist_ok=True)
 
-    reused, segments, why = segments_reusable(out_dir, src, model, force, language, context)
-    man = None
+    reused, segments, why = segments_reusable(out_dir, src, model, force, language, context,
+                                              words=words, pack=pack, decode_opts=opts)
     if reused:
-        man = manifest_mod.read(os.path.join(out_dir, "manifest.json"))
-        decode = man.get("decode") or {}
-        duration = (man.get("input") or {}).get("duration")
-        print("复用已有转写（%s 段；输入、模型、语言都对得上），重跑导出与摘要" % len(segments))
+        old = manifest_mod.read(os.path.join(out_dir, "manifest.json"))
+        decode = old.get("decode") or {}
+        duration = (old.get("input") or {}).get("duration")
+        print("复用已有转写（%s 段；输入、模型、解码参数都对得上），重跑导出与摘要" % len(segments))
+        # 复用不需要重听，但这一轮的 manifest 要记 audio.wav 的 sha256：用户为省空间
+        # 删掉 audio.wav 后重跑，不能等到最后一步才 FileNotFoundError。缺了就重抽一份。
+        wav = os.path.join(out_dir, "audio.wav")
+        if not os.path.exists(wav):
+            print("audio.wav 不在（复用转写用不到它，但 manifest 要记它的 sha256），重抽音频")
+            wav = ensure_audio(src, out_dir)
+        if duration is None:
+            # 上次没探出时长（当时既没有 ffprobe 也没有 PyAV），这时候音频已经在手边
+            # 或者刚重抽过，补探一次；否则 md 头的 duration_sec 会一直是 null。
+            duration = probe_duration(wav)
     else:
         if why:
             print("重跑转写：%s" % why)
         wav = ensure_audio(src, out_dir)
         duration = probe_duration(wav)
-        segments, info, decode = tr.transcribe_audio(wav, out_dir, model, language, pack, words,
-                                                     context=context)
+        segments, info, decode = tr.transcribe_audio(
+            wav, out_dir, model, language, pack, words, context=context,
+            batch_size=opts["batch_size"], vad_options=opts["vad_options"],
+            chunk_length=opts["chunk_length"])
 
     # 标签一律取自「实际跑的参数」，不是命令行请求的参数：复用路径下两者可能不同，
     # 用命令行参数去写 md 头就会出现「md 说 en、正文是中文、manifest 说 zh」。
@@ -202,7 +265,8 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         "source": source_url or os.path.abspath(src),
         "duration_sec": duration,
         "model": decode.get("model", model),
-        "language": decode.get("language", language),
+        # --lang auto 时 decode 里同时记了请求值和检测值，头里写检测值才有信息量
+        "language": decode.get("detected_language") or decode.get("language", language),
         "terms_pack": os.path.basename(pack) if pack else None,
         "low_conf": export.low_conf_indexes(segments),
     }
@@ -214,7 +278,7 @@ def run(src, out_dir, model="small", language="zh", pack=None,
 
     rules = termrules.load(pack)
     md_text, used_mode, bullets, dropped, summary_warnings = summary_mod.build(
-        segments, meta, summary_mode, llm_url, llm_model, rules=rules)
+        segments, meta, summary_mode, llm_url, llm_model, rules=rules, llm_key=llm_key)
     summary_path = os.path.join(out_dir, "summary.md")
     if md_text:
         with open(summary_path, "w", encoding="utf-8") as fh:
@@ -223,30 +287,54 @@ def run(src, out_dir, model="small", language="zh", pack=None,
     elif os.path.exists(summary_path):
         os.remove(summary_path)
 
-    warnings = list(fetch_warnings) + list(summary_warnings)
+    decode_warnings = []
+    # 复用路径的 decode 来自旧 manifest：上一轮的降档/回退警告不能当成这一轮发生的事
+    # 再报一遍，否则 result.json 会说「已退回串行」而这次根本没跑模型。
+    if not reused:
+        if decode.get("batch_fallback"):
+            decode_warnings.append("批推理不可用，已退回串行：%s" % decode["batch_fallback"])
+        for fb in decode.get("fallbacks") or []:
+            decode_warnings.append("转写降档（%s）：%s → %s" % (
+                fb.get("reason"), fb.get("from"), fb.get("to")))
+    warnings = list(fetch_warnings) + decode_warnings + list(summary_warnings)
     if export_warnings["invalid_cues"]:
         warnings.append("导出时修正了 %d 条异常 cue（空文本/负时间/零时长）"
                         % len(export_warnings["invalid_cues"]))
+    if export_warnings["long_cues"]:
+        warnings.append("有 %d 条 cue 超过 %.0f 秒，字幕可读性差"
+                        % (len(export_warnings["long_cues"]), export.LONG_SEC))
 
     artifacts = {
         "transcript_md": "transcript.md",
-        "summary_md": "summary.md" if md_text else None,
+        "plain": "transcript.plain.txt",
         "srt": "transcript.srt",
         "vtt": "transcript.vtt",
+        "clean_md": os.path.basename(outputs["clean_md"]) if outputs.get("clean_md") else None,
+        "summary_md": "summary.md" if md_text else None,
         "segments": "segments.json",
         "manifest": "manifest.json",
     }
-    sha = {}
-    for name in ("transcript.md", "summary.md", "segments.json"):
-        path = os.path.join(out_dir, name)
-        if os.path.exists(path):
-            sha[name] = manifest_mod.sha256_file(path)
     counts = {
         "segments": len(segments),
         "chars": sum(len(s["text"]) for s in segments),
         "low_conf": len(meta["low_conf"]),
         "corrections_applied": sum(1 for r in corrections if r.get("applied")),
     }
+    # manifest 先写、result.json 最后写：result.json 里的 ok 是「这一轮跑完了」的唯一
+    # 凭据（batch 靠它跳过），它必须最后一个落地，中途失败时目录里不能有半新半旧的组合。
+    man = manifest_mod.build(src, wav, decode, segments, outputs, warnings, terms_path=pack,
+                             duration=duration, mode="clean" if clean_mode else "verbatim",
+                             version=__version__, source_url=source_url,
+                             summary={"mode": used_mode, "bullets": bullets, "dropped": dropped},
+                             export=export_warnings)
+    manifest_mod.write(man, os.path.join(out_dir, "manifest.json"))
+
+    # sha256 覆盖这一轮实际写出的每个产物。manifest/result 不含在内：它们没法记录自己的哈希。
+    sha = {}
+    for path in list(outputs.values()) + [os.path.join(out_dir, "segments.json")]:
+        if path and os.path.exists(path):
+            sha[os.path.basename(path)] = manifest_mod.sha256_file(path)
+
     res = result_mod.build(True, out_dir,
                            {"kind": fetch_mod_kind(source_url) if source_url else "file",
                             "url": source_url, "input": os.path.basename(src)},
@@ -255,13 +343,6 @@ def run(src, out_dir, model="small", language="zh", pack=None,
                            artifacts, sha, warnings, time.time() - t0, __version__)
     result_path = result_mod.write(res, out_dir)
     outputs["result"] = result_path
-
-    man = manifest_mod.build(src, os.path.join(out_dir, "audio.wav"), decode, segments, outputs,
-                             export_warnings, terms_path=pack, duration=duration,
-                             mode="clean" if clean_mode else "verbatim",
-                             version=__version__, source_url=source_url,
-                             summary={"mode": used_mode, "bullets": bullets, "dropped": dropped})
-    manifest_mod.write(man, os.path.join(out_dir, "manifest.json"))
     print("完成：%d 段，%d 字，摘要 %d 条 -> %s"
           % (len(segments), counts["chars"], bullets, os.path.abspath(out_dir)))
     if hints:

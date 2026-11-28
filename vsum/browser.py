@@ -181,25 +181,52 @@ def open_browser(prefer=None, headless=None, profile=None):
         ) from exc
 
 
+def is_timeout(exc):
+    """是不是 selenium 的 TimeoutException。
+
+    按类名判定，不硬 import selenium.common.exceptions：selenium 是可选依赖，
+    而且这里只关心「页面没加载出来」这一类，不需要精确类型。
+    """
+    return any(cls.__name__ == "TimeoutException" for cls in type(exc).__mro__)
+
+
 def login_douyin(profile=None, timeout=300, prefer="chrome"):
-    """起可见浏览器，等用户扫码。成功后返回 (driver, kind)，**不退出**，调用方关闭。"""
+    """起可见浏览器，等用户扫码。成功后返回 (driver, kind)，**不退出**，调用方关闭。
+
+    等登录期间要能被 Ctrl-C 打断且不留 Chrome/chromedriver：这里用 try/finally，
+    `except Exception` 接不住 KeyboardInterrupt/SystemExit（它们是 BaseException）。
+    """
     driver, kind = open_browser(prefer=prefer, headless=False, profile=profile)
+    logged_in = False
     try:
         driver.set_page_load_timeout(40)
-        driver.get("https://www.douyin.com/")
+        try:
+            driver.get("https://www.douyin.com/")
+        except Exception as exc:
+            if not is_timeout(exc):
+                raise
+            raise BrowserError(
+                "抖音首页 40 秒没加载出来（页面没打开，多半是网络不通或请求被拦）。"
+                "检查网络后重跑 `vsum login douyin`；登录态存放的独立 profile 是 %s，"
+                "想换一个用 --profile 或环境变量 VSUM_BROWSER_PROFILE。"
+                % profile_dir(profile)) from exc
         deadline = time.time() + timeout
         while time.time() < deadline:
             names = {c.get("name") for c in driver.get_cookies()}
             if "sessionid" in names or "sessionid_ss" in names:
+                logged_in = True
                 return driver, kind
             time.sleep(3)
         raise BrowserError("扫码超时（%d 秒）。窗口里扫码登录后重跑：vsum login douyin" % timeout)
-    except Exception:
-        close(driver)
-        raise
+    finally:
+        if not logged_in:
+            close(driver)
 
 
 def close(driver):
+    """关掉 driver；已经死掉/已经关过的 driver 不算错。"""
+    if driver is None:
+        return
     try:
         driver.quit()
     except Exception:

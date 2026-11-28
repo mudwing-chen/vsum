@@ -20,6 +20,8 @@ import re
 DEFAULT_TERMS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "terms.json")
 
 
+CJK = re.compile(r"[\u3400-\u9fff]")
+
 def load(path=None):
     """返回 rules，已按 surface 长度降序排好。"""
     path = path or DEFAULT_TERMS
@@ -33,6 +35,12 @@ def load(path=None):
                 "surface": v["surface"].lower(),
                 "confidence": v.get("confidence", "high"),
             })
+    for r in rules:
+        # 中文没有词边界，单字 variant 会在任意合成词里命中（"云" 命中 "云盘"），
+        # 那不是修正而是污染；两字以上 + canonical 足够独特才靠得住。
+        if CJK.search(r["surface"]) and len(r["surface"]) < 2:
+            raise ValueError("中文 variant 至少两个字：%r（canonical %s）"
+                             % (r["surface"], r["canonical"]))
     rules.sort(key=lambda r: (-len(r["surface"]), r["surface"]))
     return rules
 

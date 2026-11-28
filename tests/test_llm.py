@@ -28,7 +28,8 @@ SEGS = [{"start": 0.0, "end": 3.0, "text": "今天我们聊聊 Claude Code 这�
         {"start": 200.0, "end": 203.0, "text": "最后说说价格，Pro 版 20 美元", "avg_logprob": -0.2}]
 META = {"title": "demo", "duration_sec": 210.0, "low_conf": {2}}
 
-STATE = {"calls": 0, "last_prompt": "", "reply": None, "status": 200, "error_body": ""}
+STATE = {"calls": 0, "last_prompt": "", "last_auth": "unset", "reply": None,
+         "status": 200, "error_body": ""}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -37,6 +38,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length).decode("utf-8"))
         STATE["calls"] += 1
         STATE["last_prompt"] = body["messages"][0]["content"]
+        STATE["last_auth"] = self.headers.get("Authorization")
         status = STATE.get("status", 200)
         if status != 200:
             raw = (STATE.get("error_body") or "{}").encode("utf-8")
@@ -68,8 +70,9 @@ try:
             {"text": "作者觉得它性价比一般", "sec": 3.0},       # 改写，必须被回查门删掉
         ]}, ensure_ascii=False)
     md, mode, bullets, dropped, warn = summary.build(
-        SEGS, META, "llm", llm_url=url, llm_model="fake", rules=RULES)
+        SEGS, META, "llm", llm_url=url, llm_model="fake", rules=RULES, llm_key="sk-test-123")
     check("mode 是 llm", mode == "llm", mode)
+    check("带 key 时发 Bearer", STATE["last_auth"] == "Bearer sk-test-123", STATE["last_auth"])
     check("调了一次接口", STATE["calls"] == 1, STATE["calls"])
     check("综述保留", "作者认为 Claude Code 单价便宜" in md, md[:300])
     check("综述标了未校验", "未经逐字校验" in md, md[:400])
@@ -85,6 +88,7 @@ try:
     md2, mode2, b2, d2, _ = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake", rules=RULES)
     check("只有综述也算成功", mode2 == "llm" and "一句话就够了" in md2, (mode2, md2[:200]))
     check("只有综述时要点 0 条", b2 == 0, b2)
+    check("不给 key 就不发 Authorization", STATE["last_auth"] is None, STATE["last_auth"])
 
     # 3) 返回不合法：退回抽取式，并留 warning
     STATE["reply"] = "这不是 JSON"
