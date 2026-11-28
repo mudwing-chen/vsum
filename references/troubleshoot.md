@@ -16,6 +16,10 @@
 
 模型缓存在 HuggingFace 目录（`HF_HOME` / `HF_HUB_CACHE` 可改），`vsum doctor` 会看 `model:<名字>` 有没有缓存。
 
+**模型来源不可认证**：faster-whisper 自己下载权重，vsum 不校验摘要、也不记 revision。用了镜像
+（`HF_ENDPOINT` 不是官方域名）时，`manifest.json` 会记 `decode.hf_endpoint`，`result.json` 的
+`warnings` 里也会有一条提示；需要严格复现就先把模型下到本地，再用 `--model <目录>` 指过去。
+
 ## 症状 → 处置
 
 | 症状 | 解法 |
@@ -26,6 +30,7 @@
 | `cublas64_12.dll` 缺失（Windows） | 把 nvidia cublas / cuda_nvrtc 的 bin 加进 PATH |
 | `float16` 不支持 / Pascal 显卡 | 设 `WHISPER_COMPUTE=int8`（或 `int8_float32`） |
 | 显存不足 / OOM | 先自动降档，最多 3 次：batch 减半 → 换 `compute_type` → 换更小的模型 → 退回 CPU，每次尝试记在 `manifest.decode.fallbacks`；自动降档仍失败再手动降模型或设 `WHISPER_COMPUTE=int8` |
+| `没有识别到任何语音`（退出码 4） | 音频是静音/纯音乐，或 VAD 阈值太严：调 `--vad-threshold` 或 `--no-vad` 再跑；确实没人说话就别跑 |
 | 转写很久没输出 | 正常；看进程是否还在跑，`transcript.txt` 出现即有结果 |
 | 两次转写结果不同 | 解码带温度回退，不是 bug；需要固定结果就保留 `segments.json` 复用 |
 | 字幕条目少于 `segments.json` 段数 | 正常：空文本、负时间、零时长被修正，逐条记在 `manifest.export.invalid_cues`（`manifest.warnings` 是给人读的句子列表） |
@@ -33,12 +38,13 @@
 | `--summary llm` 失败 | 检查 `--llm-url` 是否是 OpenAI 兼容 base（到 `/v1` 为止），失败会自动退回抽取式并在 `warnings` 里说明 |
 | 摘要比原文短很多 | `result.json` 的 `summary.dropped` 是回查被删的条数；删得多说明要点不是原文子串 |
 | 链接抓取报浏览器错误 | `vsum doctor` 看 `browser` 行；装 Chrome/Edge，或 `--browser` 指定 |
-| 代理干扰下载 | 抓抖音走 urllib（不吃环境代理）；yt-dlp 加 `--proxy` 或 `--proxy ''` |
+| 代理干扰下载 | urllib **会**吃 `http_proxy` / `https_proxy`（老版本这里写反了）：不想走代理就 `set http_proxy=` 清掉；抖音直链下载也不吃 `--proxy` 参数，只认环境变量 |
 
 ## Windows
 
 - 控制台默认 cp936（英文系统是 cp1252），打印中文原本会抛 `UnicodeEncodeError`；0.3.0 起进程内改用 `backslashreplace` 兜底，不再崩，但编不出的字会显示成 `\uXXXX`。想正常看中文：用 Windows Terminal，或先 `chcp 65001`
-- 输出重定向/接管道时自动写 UTF-8，可直接喂给别的程序；终端里保持本地编码不动
+- 输出重定向/接管道时写 UTF-8（`VSUM_IO_ENCODING` 可改成 `gbk` 等本机编码）；终端里保持本地编码不动
+- **父进程按 locale 解码会崩**：中文 Windows 上 `subprocess.run(..., text=True)` 默认用 cp936 解码，读到 UTF-8 中文就 `UnicodeDecodeError: 'gbk' codec can't decode byte 0xa0`。脚本集成时二选一：显式 `encoding="utf-8"`，或设 `VSUM_IO_ENCODING=gbk` 让 vsum 按本机编码写
 - `vsum doctor` 的 `browser` 行报 Chrome/Edge 路径；Windows 候选在三个安装根下（`ProgramFiles`、`ProgramFiles(x86)`、`LOCALAPPDATA`）
 
 ## macOS / Linux
@@ -54,7 +60,7 @@
 | 0 | 成功 |
 | 1 | `vsum find` 没有命中 |
 | 2 | 输入/参数问题（文件不存在、JSON 坏了、`clip` 的时间格式不对或不在任何一段里） |
-| 3 | 依赖缺失（ffmpeg / faster-whisper / selenium） |
-| 4 | 转写、抓取或剪片失败（含模型加载失败、找不到原视频） |
+| 3 | 依赖缺失或起不来（ffmpeg / faster-whisper / selenium、CUDA DLL、模型加载失败） |
+| 4 | 转写、抓取或剪片失败（VAD 全滤掉、OOM 降档后仍失败、下载失败、找不到原视频） |
 | 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`），或 `batch` 有失败项 |
 | 130 | Ctrl-C |

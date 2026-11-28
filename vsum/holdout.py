@@ -19,7 +19,7 @@ import os
 import random
 import sys
 
-from . import evaluate
+from . import atomic, evaluate
 from . import manifest as manifest_mod
 
 BOOTSTRAP = 1000
@@ -162,10 +162,9 @@ def run(corpus, out=None, baseline=None, max_cer=None, quiet=False):
                   % (c["delta_micro"] * 100, lo * 100, hi * 100))
             print("verdict             : %s  (变差 %d 项 / 变好 %d 项)"
                   % (c["verdict"], c["worse"], c["better"]))
-    target = out or os.path.join(corpus, "holdout.json")
-    with open(target, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
+    # 语料目录是输入，别往里写文件（发给别人前得保证一个字节没动）；默认落当前目录
+    target = out or "holdout.json"
+    atomic.write_json(target, doc)
     if not quiet:
         print("json                : %s" % target)
     if max_cer is not None and agg["micro_cer"] is not None and agg["micro_cer"] > max_cer:
@@ -178,7 +177,7 @@ def run(corpus, out=None, baseline=None, max_cer=None, quiet=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="vsum holdout", description="固定语料上的 CER 与回归比较")
     ap.add_argument("--corpus", required=True, help="每项一个子目录：segments.json + ref.txt/.srt")
-    ap.add_argument("-o", "--out", default=None, help="默认 corpus/holdout.json")
+    ap.add_argument("-o", "--out", default=None, help="默认 ./holdout.json（不写进语料目录）")
     ap.add_argument("--baseline", default=None, help="上一轮 holdout.json，做配对 bootstrap")
     ap.add_argument("--max-cer", type=float, default=None, help="micro CER 超过就退出 5")
     ap.add_argument("-q", "--quiet", action="store_true")

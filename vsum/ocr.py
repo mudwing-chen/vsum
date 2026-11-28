@@ -10,19 +10,21 @@ medium、CPU 和 GPU，`Cloud`/`GPD` 的错法完全一致）。而正确写法�
    - 拉丁词：画面上出现一个「转写里从没出现过的拼写」，且与某个转写词很像 → 候选修正
    - 中文：不自动猜，只把「这一段画面上写的是什么」列出来给人看
 
-OCR 引擎是可选依赖（`pip install 'vsum[ocr]'`），没装就明确报错，不影响其他功能。
+OCR 引擎是可选依赖（`pip install 'vsum[ocr] @ git+https://github.com/mudwing-chen/vsum'`），
+没装就明确报错，不影响其他功能。
 """
 import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
-from . import phonetics
+from . import atomic, phonetics
 from .pipeline import InputError
+from .textnorm import safe_term
 from .timefmt import mmss
+from .toolpath import which
 from .transcribe import DependencyError
 
 TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{2,}")
@@ -309,7 +311,7 @@ def pick_times(segments, low_conf=None, every=None, times=None, limit=24):
 
 def extract_frames(video, times, out_dir, quality=3):
     """按秒抽帧，返回 [(秒, 路径)]。失败的时间点直接跳过，不中断。"""
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = which("ffmpeg")
     if not ffmpeg:
         raise DependencyError("没找到 ffmpeg")
     frame_dir = os.path.join(out_dir, "frames")
@@ -333,7 +335,9 @@ def _engine():
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as exc:
         raise DependencyError(
-            "没有 OCR 引擎：pip install 'vsum[ocr]'（rapidocr-onnxruntime）。"
+            "没有 OCR 引擎：pip install 'vsum[ocr] @ git+https://github.com/"
+            "mudwing-chen/vsum'（rapidocr-onnxruntime）。注意 PyPI 上的 vsum "
+            "是另一个项目。"
             "装不上也没关系，vsum 的其他功能不依赖它。原始错误：%s" % exc)
     ocr = RapidOCR()
 
@@ -365,7 +369,15 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
     if os.path.exists(man_path):
         with open(man_path, encoding="utf-8") as fh:
             man = json.load(fh)
-    video = (man.get("input") or {}).get("path")
+    info = man.get("input") or {}
+    video = info.get("path")
+    if video and not os.path.isabs(video):
+        video = os.path.join(path, video)      # 新 manifest 只记文件名
+    if video and os.path.isfile(video):
+        from .lookup import _trusted_input
+        # 别人给的产物目录里，manifest.input.path 可以指向任意文件；
+        # 目录外只有在 sha256 对得上时才认（不匹配会抛 ValueError -> 退出码 2）
+        video = _trusted_input(path, video, info.get("sha256"))
     if not video or not os.path.exists(video):
         for name in ("video.mp4", "audio.wav"):
             cand = os.path.join(path, name)
@@ -452,13 +464,8 @@ def run(path, out_dir=None, every=None, times=None, limit=24, quiet=False):
         "candidates": sorted(cands.values(),
                              key=lambda c: (not c.get("applicable", True), -c["hits"], c["surface"])),
     }
-    json_path = os.path.join(out_dir, "ocr.json")
-    with open(json_path, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
-    md_path = os.path.join(out_dir, "ocr.md")
-    with open(md_path, "w", encoding="utf-8") as fh:
-        fh.write(_report(doc))
+    json_path = atomic.write_json(os.path.join(out_dir, "ocr.json"), doc)
+    md_path = atomic.write_text(os.path.join(out_dir, "ocr.md"), _report(doc))
     if not quiet:
         print("画面与转写对照 %d 处，候选修正 %d 条 -> %s"
               % (len(pairs), len(doc["candidates"]), json_path))

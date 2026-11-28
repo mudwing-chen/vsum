@@ -16,7 +16,7 @@ try:  # numpy 是 faster-whisper 的依赖，正常装包一定在；CI 用 --no
 except ImportError:  # pragma: no cover - 只在无依赖的测试环境发生
     np = None
 
-from . import export as export_mod, hardware, termrules, textnorm
+from . import atomic, export as export_mod, hardware, termrules, textnorm
 
 DEFAULT_PROMPT = "以下是普通话视频内容。"
 EN_PROMPT = "The following is an English video transcript."
@@ -220,6 +220,20 @@ def ensure_cuda_libs():
     return added
 
 
+def restore_path(added):
+    """把 ensure_cuda_libs 加进 PATH 的目录撤掉。
+
+    那几条只该在 Windows 加载 cudnn/cublas 时存在；留着它们会让后面所有子进程
+    （ffmpeg、yt-dlp、浏览器）的 PATH 里多出一堆 nvidia 目录。
+    """
+    if not added:
+        return
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    keep = [p for p in parts if p not in added]
+    if keep != parts:
+        os.environ["PATH"] = os.pathsep.join(keep)
+
+
 def load_hotwords(terms_path=None):
     """WHISPER_HOTWORDS=1 时把词表的 canonical 拼成提示词；默认关。"""
     if os.environ.get("WHISPER_HOTWORDS", "0").strip() in ("", "0"):
@@ -340,6 +354,9 @@ def decode_args(model_name, language, terms_path=None, words=None, context=True,
         "batch_size": batch,
         "config_sha256": config_digest(language, terms_path, words, context, batch,
                                        vad_options, chunk_length),
+        # 权重由 faster-whisper 从 HF（或镜像）下载，vsum 不校验摘要：把 endpoint 记下来，
+        # 至少能回答「这份产物用的是哪来的模型」
+        "hf_endpoint": os.environ.get("HF_ENDPOINT") or None,
         "device_source": hw["source"], "gpu": hw["name"], "model_cap": hw["model_cap"],
         "audio_input": "ndarray",
     }
@@ -361,9 +378,11 @@ def get_model(model_name, device, compute, cache=True):
         return _MODELS[key], True
     from faster_whisper import WhisperModel
 
-    if device == "cuda":
-        ensure_cuda_libs()
-    model = WhisperModel(model_name, device=device, compute_type=compute)
+    added = ensure_cuda_libs() if device == "cuda" else []
+    try:
+        model = WhisperModel(model_name, device=device, compute_type=compute)
+    finally:
+        restore_path(added)
     if cache:
         _MODELS[key] = model
     return model, False
@@ -620,6 +639,10 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
     recorded["device"] = state[1]
     recorded["compute_type"] = state[2]
     recorded["batch_size"] = 1 if mode == "serial" else state[3]
+    if state[1] != device:
+        # 请求的是 GPU、实际在 CPU 上跑完：manifest 要能看出这一点，
+        # 别让人拿「device: cuda」的产物去解释 CPU 的速度
+        recorded["device_source"] = "fallback"
     if state[3] > 1:
         print("批推理：batch_size=%d（窗口独立解码，切段与串行不完全一致）" % state[3])
 
@@ -634,11 +657,9 @@ def transcribe_audio(audio_path, out_dir, model_name="small", language="zh",
         raise TranscribeError("没有识别到任何语音（VAD 把整段过滤掉了，或音频是静音）：%s"
                               % os.path.basename(audio_path))
 
-    with open(os.path.join(out_dir, "transcript.txt"), "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
-    with open(os.path.join(out_dir, "segments.json"), "w", encoding="utf-8") as fh:
-        json.dump({"segments": segments}, fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
+    # 原子写：长音频跑到一半被 Ctrl-C，不该留下半截 segments.json 让复用逻辑读它
+    atomic.write_text(os.path.join(out_dir, "transcript.txt"), "\n".join(lines))
+    atomic.write_json(os.path.join(out_dir, "segments.json"), {"segments": segments})
 
     recorded["t2s"] = t2s_ok
     recorded["fallback_segments"] = fallback_count(segments)

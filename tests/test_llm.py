@@ -8,6 +8,8 @@
 import json
 import sys
 import threading
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = __file__.rsplit("\\", 1)[0] if "\\" in __file__ else __file__.rsplit("/", 1)[0]
@@ -29,7 +31,8 @@ SEGS = [{"start": 0.0, "end": 3.0, "text": "今天我们聊聊 Claude Code 这�
 META = {"title": "demo", "duration_sec": 210.0, "low_conf": {2}}
 
 STATE = {"calls": 0, "last_prompt": "", "last_auth": "unset", "reply": None,
-         "status": 200, "error_body": ""}
+         "status": 200, "error_body": "", "ctype": None, "redirect": None,
+         "raw": None, "b_hits": []}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -39,17 +42,50 @@ class Handler(BaseHTTPRequestHandler):
         STATE["calls"] += 1
         STATE["last_prompt"] = body["messages"][0]["content"]
         STATE["last_auth"] = self.headers.get("Authorization")
+        if STATE["redirect"]:
+            # 反代/网关式跳转：Location 指向另一个端口（跨源）
+            self.send_response(302)
+            self.send_header("Location", STATE["redirect"])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         status = STATE.get("status", 200)
-        if status != 200:
+        if STATE["raw"] is not None:
+            raw = STATE["raw"]
+        elif status != 200:
             raw = (STATE.get("error_body") or "{}").encode("utf-8")
         else:
             payload = {"choices": [{"message": {"content": STATE["reply"]}}]}
             raw = json.dumps(payload).encode("utf-8")
         self.send_response(status)
+        self.send_header("Content-Type", STATE["ctype"] or "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        try:
+            self.wfile.write(raw)
+        except Exception:
+            pass  # 客户端按上限提前断开连接是预期行为，不是测试失败
+
+    def log_message(self, *args):
+        pass
+
+
+class TargetHandler(BaseHTTPRequestHandler):
+    """重定向的去处：被访问过就记一笔（带没带 Authorization 尤其要记）。"""
+
+    def _hit(self):
+        STATE["b_hits"].append({"path": self.path, "method": self.command,
+                                "auth": self.headers.get("Authorization")})
+        raw = json.dumps({"choices": [{"message": {"content": json.dumps(
+            {"overview": "对方域名不该看到这条", "bullets": []}, ensure_ascii=False)}}]},
+            ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    do_GET = do_POST = _hit
 
     def log_message(self, *args):
         pass
@@ -59,6 +95,11 @@ server = HTTPServer(("127.0.0.1", 0), Handler)
 port = server.server_address[1]
 threading.Thread(target=server.serve_forever, daemon=True).start()
 url = "http://127.0.0.1:%d/v1" % port
+
+target = HTTPServer(("127.0.0.1", 0), TargetHandler)
+target_port = target.server_address[1]
+threading.Thread(target=target.serve_forever, daemon=True).start()
+
 RULES = termrules.load()
 
 try:
@@ -122,8 +163,98 @@ try:
     STATE["reply"] = json.dumps({"overview": "长片综述", "bullets": []}, ensure_ascii=False)
     summary.build(many, META, "llm", llm_url=url, llm_model="fake", rules=RULES)
     check("长输入分多次请求", STATE["calls"] > 1, STATE["calls"])
+
+    # 7) H-1：跨源重定向必须拒，Authorization 不能跟着 Location 走到别的端口/域名
+    STATE["b_hits"] = []
+    STATE["redirect"] = "http://127.0.0.1:%d/v1/chat/completions" % target_port
+    STATE["reply"] = json.dumps({"overview": "不该走到这里", "bullets": []}, ensure_ascii=False)
+    md7, mode7, _, _, warn7 = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                            rules=RULES, llm_key="sk-real-secret")
+    check("跨源重定向后对方一条都没收到", STATE["b_hits"] == [], STATE["b_hits"])
+    check("跨源重定向退回抽取式", mode7 == "extractive", mode7)
+    check("跨源重定向有 warning", any("拒绝跨主机重定向" in w for w in warn7), warn7)
+    STATE["redirect"] = None
+
+    # 同源重定向照常放行（只挡跨源）
+    hop = summary.SameHostRedirect()
+    kept = hop.redirect_request(urllib.request.Request(url + "/chat/completions"), None,
+                                302, "Found", {}, url + "/v1-eu/chat/completions")
+    check("同源重定向放行", kept is not None and kept.full_url.endswith("/v1-eu/chat/completions"),
+          kept)
+    try:
+        hop.redirect_request(urllib.request.Request(url + "/chat/completions"), None, 302,
+                             "Found", {}, "https://evil.example.com/v1/chat/completions")
+        check("跨源重定向抛 HTTPError", False)
+    except urllib.error.HTTPError as exc:
+        check("跨源重定向抛 HTTPError", "拒绝跨主机重定向" in str(exc), exc)
+
+    # 8) M-1：sec 是 inf（JSON 里的 1e999）不能崩，那条要点丢掉，其余照常出版
+    STATE["reply"] = ('{"overview": "价格那段有个数字。", "bullets": ['
+                      '{"text": "它每个月 20 美元，比 Copilot 便宜", "sec": 3.0},'
+                      '{"text": "最后说说价格，Pro 版 20 美元", "sec": 1e999}]}')
+    md8, mode8, b8, _, _ = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                         rules=RULES)
+    check("inf 的 sec 不崩（仍是 llm）", mode8 == "llm", mode8)
+    check("inf 那条被丢", "最后说说价格，Pro 版 20 美元" not in md8, md8[:300])
+    check("正常那条还在", b8 == 1 and "它每个月 20 美元" in md8, b8)
+    check("find_segment 对 inf 返回 None", summary.find_segment(float("inf"), SEGS) is None)
+    check("find_segment 对坏值返回 None",
+          summary.find_segment("abc", SEGS) is None and summary.find_segment(None, SEGS) is None)
+    check("_parse_reply 丢掉非有限 sec",
+          summary._parse_reply('{"bullets": [{"text": "x", "sec": 1e999}]}') is None)
+    check("_parse_reply 丢掉 NaN",
+          summary._parse_reply('{"bullets": [{"text": "x", "sec": NaN}]}') is None)
+
+    # 9) M-5：超大响应体只读到上限就降级，不把 9MB 全读进内存再解析
+    STATE["raw"] = ('{"choices": [{"message": {"content": "' + "A" * (9 * 1024 * 1024)
+                   + '"}}]}').encode("utf-8")
+    md9, mode9, _, _, warn9 = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                            rules=RULES)
+    check("超大响应退回抽取式", mode9 == "extractive", mode9)
+    check("超大响应有 warning", any("超过" in w for w in warn9), warn9)
+    STATE["raw"] = None
+
+    # Content-Type 不是 JSON：仍然尝试解析，但记一条 warning
+    STATE["ctype"] = "text/html; charset=utf-8"
+    STATE["reply"] = json.dumps({"overview": "类型不对也照样解析。", "bullets": []},
+                                ensure_ascii=False)
+    md10, mode10, _, _, warn10 = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                               rules=RULES)
+    check("Content-Type 不对仍解析", mode10 == "llm" and "类型不对也照样解析" in md10,
+          (mode10, md10[:200]))
+    check("Content-Type 不对有 warning", any("Content-Type" in w for w in warn10), warn10)
+    STATE["ctype"] = None
+
+    # 10) H-1 入口：明文 http 只许本机，其余在发请求前就报错（cli 映射成退出码 2）
+    try:
+        summary.build(SEGS, META, "llm", llm_url="http://192.0.2.10:8080/v1",
+                      llm_model="fake", rules=RULES)
+        check("非回环 http 抛 ValueError", False)
+    except ValueError as exc:
+        check("非回环 http 抛 ValueError", "https" in str(exc), exc)
+    check("https 放行", summary.check_url("https://api.deepseek.com/v1")
+          == "https://api.deepseek.com/v1")
+    check("本机 http 放行", summary.check_url(url) == url)
+    check("本机 localhost 放行",
+          summary.check_url("http://localhost:11434/v1") == "http://localhost:11434/v1")
+
+    # 11) M-2：综述有长度上限，超了整段丢掉（要点不受影响）
+    STATE["reply"] = json.dumps({
+        "overview": "结论" * 120,
+        "bullets": [{"text": "它每个月 20 美元，比 Copilot 便宜", "sec": 3.0}]},
+        ensure_ascii=False)
+    md11, _, b11, _, warn11 = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake",
+                                            rules=RULES)
+    check("超长综述整段删除", "## 一句话" not in md11 and "结论结论" not in md11, md11[:300])
+    check("超长综述有 warning", any("上限" in w for w in warn11), warn11)
+    check("综述删了要点还在", b11 == 1 and "它每个月 20 美元" in md11, b11)
+    STATE["reply"] = json.dumps({"overview": "短" * summary.OVERVIEW_MAX, "bullets": []},
+                                ensure_ascii=False)
+    md12, _, _, _, _ = summary.build(SEGS, META, "llm", llm_url=url, llm_model="fake", rules=RULES)
+    check("刚好到上限的综述保留", "## 一句话" in md12, md12[:200])
 finally:
     server.shutdown()
+    target.shutdown()
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

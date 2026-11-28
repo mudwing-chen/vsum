@@ -73,7 +73,8 @@
 | `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile | `~/.cache/vsum/chrome` |
 | `VSUM_BROWSER_ARGS` | 追加浏览器参数，逗号分隔（受限环境用 `--no-sandbox,--disable-gpu`） | 空 |
 | `SE_CACHE_PATH` | selenium 驱动缓存 | `~/.cache/selenium` |
-| `VSUM_LLM_KEY` / `OPENAI_API_KEY` | `--llm-key` 的替代 | 无 |
+| `VSUM_LLM_KEY` / `OPENAI_API_KEY` | `--llm-key` 的替代（优先于命令行参数） | 无 |
+| `VSUM_IO_ENCODING` | 输出被重定向/接管道时的编码；父进程按 locale 解码时改成 `gbk` 等 | `utf-8` |
 
 ## 产物
 
@@ -98,7 +99,7 @@
 | 0 | 成功 |
 | 1 | `vsum find` 没有命中（不算错误） |
 | 2 | 用法或输入错误（文件不存在、参数不对、JSON 坏了、`clip` 的时间格式不对或不在任何一段里、`segments.json` 为空） |
-| 3 | 缺依赖（没装 faster-whisper / selenium / ffmpeg） |
-| 4 | 转写、抓取或剪片失败（含模型加载失败、找不到原视频、0 段转写） |
+| 3 | 缺依赖或依赖起不来（faster-whisper / selenium / ffmpeg、CUDA DLL、模型加载失败） |
+| 4 | 转写、抓取或剪片失败（VAD 全滤掉、OOM 降档后仍失败、下载失败、找不到原视频） |
 | 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`），或 `batch` 有失败项 |
 | 130 | Ctrl-C 中断 |

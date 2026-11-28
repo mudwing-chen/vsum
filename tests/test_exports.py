@@ -95,6 +95,14 @@ for key in ("srt", "vtt", "md", "plain"):
     check("确定性: " + key,
           open(outputs[key], "rb").read() == open(outputs2[key], "rb").read())
 
+# 原子写：产物目录不留半截 .tmp，覆盖写之后读到的是完整的新内容
+check("不留临时文件", [n for n in os.listdir(tmp2) if n.endswith(".tmp")] == [], os.listdir(tmp2))
+with open(outputs2["srt"], "w", encoding="utf-8") as fh:
+    fh.write("旧内容\n")
+export.export_all(SEGS, tmp2)
+check("覆盖写换成完整新内容",
+      open(outputs2["srt"], encoding="utf-8").read().count("-->") == len(SEGS))
+
 proc = subprocess.run([sys.executable, "-m", "vsum", "export",
                        "--segments", os.path.join(HERE, "fixtures", "segments", "demo.json"),
                        "-o", os.path.join(tmp, "cli")], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")

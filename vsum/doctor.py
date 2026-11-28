@@ -8,7 +8,15 @@ import subprocess
 import sys
 
 from . import hardware
+from .toolpath import which
 from .transcribe import CACHE_HINTS, cache_state, hf_root, resolve_model
+
+INSTALL = "pip install 'vsum[%s] @ git+https://github.com/mudwing-chen/vsum'"
+
+
+def install_hint(extra):
+    """PyPI 上的 vsum 是另一个项目：装 extras 必须指到本仓库。"""
+    return INSTALL % extra
 
 
 def ffmpeg_hint(system=None):
@@ -60,7 +68,7 @@ def collect(model="small"):
     add("python", sys.version_info >= (3, 9), "%d.%d.%d" % sys.version_info[:3],
         "需要 3.9+")
 
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = which("ffmpeg")
     add("ffmpeg", bool(ffmpeg), ffmpeg or "not found",
         ffmpeg_hint())
     if ffmpeg:
@@ -68,7 +76,7 @@ def collect(model="small"):
 
     # vsum 自己不用 ffprobe：时长探测会退回 PyAV，抽音轨/剪片只用 ffmpeg。
     # 缺了它只是 manifest 里少个 duration，不该把 doctor 判成失败。
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = which("ffprobe")
     warn("ffprobe", bool(ffprobe), ffprobe or "not found（可选）",
          "随 ffmpeg 一起装更省事；没有就退回 PyAV 探测时长")
 
@@ -124,7 +132,8 @@ def collect(model="small"):
         rows.append(("browser", "ok", detail, ""))
     else:
         rows.append(("browser", "extra", detail,
-                     "链接抓取不可用（本地文件不受影响）：pip install 'vsum[browser]' 并装 Chrome 或 Edge"))
+                     "链接抓取不可用（本地文件不受影响）：%s 并装 Chrome 或 Edge"
+                     % install_hint("browser")))
 
     # yt-dlp 只有 vsum fetch 抓 B站 / YouTube 才用；本地文件、抖音走浏览器，不依赖它
     try:
@@ -141,7 +150,8 @@ def collect(model="small"):
         rows.append(("yt-dlp", "ok", ytdlp_ver, ""))
     else:
         rows.append(("yt-dlp", "extra", "未装",
-                     "B站 / YouTube 抓取不可用（本地文件与抖音不受影响）：pip install 'vsum[yt]'"))
+                     "B站 / YouTube 抓取不可用（本地文件与抖音不受影响）：%s"
+                     % install_hint("yt")))
 
     # 缓存目录不可用是「模型明明下过却加载不了」的头号原因（换盘后软链断掉最常见），
     # 单独一行，别让它伪装成「未缓存」。
@@ -173,10 +183,29 @@ def collect(model="small"):
         rows.append(("ocr", "ok", "rapidocr 已装", ""))
     else:
         rows.append(("ocr", "extra", "未装",
-                     "抽帧 OCR 不可用（转写不受影响）：pip install 'vsum[ocr]'"))
+                     "抽帧 OCR 不可用（转写不受影响）：%s" % install_hint("ocr")))
 
     free = shutil.disk_usage(os.getcwd()).free / (1 << 30)
     warn("disk", free > 2, "%.1f GB free" % free, "reserve >2 GB for audio + model")
+
+    # 安装提示撞名：PyPI 上的 `vsum` 是另一个项目，只看发行版元数据里的作者/主页
+    try:
+        from importlib.metadata import metadata as _metadata
+        dist_meta = _metadata("vsum")
+    except Exception:
+        dist_meta = None
+    if dist_meta is None:
+        rows.append(("dist", "extra", "未安装（源码运行）",
+                     "安装请指到本仓库：%s" % install_hint("all")))
+    else:
+        blob = " ".join(str(x) for key in ("Author", "Author-email", "Home-page", "Project-URL")
+                        for x in (dist_meta.get_all(key) or []))
+        if "mudwing" in blob.lower():
+            rows.append(("dist", "ok", "mudwing-chen/vsum", ""))
+        else:
+            warn("dist", False, "同名发行版不是本项目",
+                 "PyPI 上的 vsum 是另一个项目；卸掉重装：pip uninstall vsum && %s"
+                 % install_hint("all"))
 
     return rows, ok
 

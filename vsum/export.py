@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 
+from . import atomic
 from .timefmt import mmss as _mmss
 
 LONG_SEC = 7.0
@@ -221,10 +222,8 @@ def export_all(segments, out_dir, clean_md=None, source=None, meta=None, correct
     segments, invalid = sanitize(segments)
 
     def write(name, content):
-        path = os.path.join(out_dir, name)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        return path
+        # 原子写：batch/评测可能在导出途中读到这些文件，半截产物会被当真
+        return atomic.write_text(os.path.join(out_dir, name), content)
 
     outputs = {
         "txt": write("transcript.txt", "\n".join(
@@ -240,8 +239,7 @@ def export_all(segments, out_dir, clean_md=None, source=None, meta=None, correct
     if source is not None:
         meta = {"segments": source, "sha256": sha256_file(source), "count": len(segments),
                 "artifacts": sorted(os.path.basename(p) for p in outputs.values())}
-        outputs["source"] = write("export.source.json",
-                                  json.dumps(meta, ensure_ascii=False, indent=1) + chr(10))
+        outputs["source"] = atomic.write_json(os.path.join(out_dir, "export.source.json"), meta)
     return outputs, {"long_cues": long_cues(segments),
                      "empty_segments": sum(1 for x in invalid if x["reason"] == "empty_text"),
                      "invalid_cues": invalid}

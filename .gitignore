@@ -29,8 +29,16 @@ index.md
 !docs/example/summary.md
 !docs/example/transcript.txt
 
-# 浏览器 profile / 登录态：可能含 cookie，永远不要提交
+# 浏览器 profile / 登录态：可能含 cookie（等价于账号），永远不要提交
 *.ocr-venv/
+.vsum-profile/
+vsum-profile/
+profile/
+**/chrome-profile/
+# 本机密钥/密钥清单
+.env
+*.env
+.env.*
 
 # Python
 build/

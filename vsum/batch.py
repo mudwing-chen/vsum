@@ -218,6 +218,10 @@ def _run_parallel(urls, out_dir, model, language, pack, browser, headless, profi
                 url = urls[idx]
                 target = os.path.join(out_dir, items[idx]["dir"])
                 env = dict(os.environ)
+                # 子进程只跑默认抽取式摘要（_child_cmd 不带 --summary），用不到 LLM key；
+                # 别把它复制进每一个并行子进程的 environ 里
+                for _key in ("VSUM_LLM_KEY", "OPENAI_API_KEY"):
+                    env.pop(_key, None)
                 dev = devs[len(running) % len(devs)] if devs else None
                 if dev:
                     if dev.startswith("cuda:"):

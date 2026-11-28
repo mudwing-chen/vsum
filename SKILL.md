@@ -22,8 +22,8 @@ vsum doctor         # MISSING 才必须装；warn / extra 是能降级跑的
 PyPI 上的 `vsum` **是另一个同名项目**（Baire 的 video-summary），装错会得到完全不同的 CLI。
 本项目的安装只有两条：`pip install -e .`，或
 `uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"`。
-`vsum doctor` 里没有 `model_cap` / `plan` 行就是装错了：改用 `python3 -m vsum`，并提醒用户
-「改名 `vsum-cli` 发到 PyPI 之后再 `pip install`」。
+`vsum doctor` 里没有 `model_cap` / `plan` 行、或 `dist` 行不是 `ok`，就是装错了：改用
+`python3 -m vsum`，并提醒用户「改名 `vsum-cli` 发到 PyPI 之后再 `pip install`」。
 
 同名 skill 也会撞：本机若还装着别的视频总结 skill（video-summary 之类），触发词都是
 「抖音/B站/YouTube + 转写/总结」。一件事只用一个 skill——调 `vsum` 命令的活归这里；
@@ -49,6 +49,10 @@ vsum "<链接>" -o out/<名>/      # 抖音/B站/YouTube，需要 [browser,yt]
 
 **无声、纯音乐、全程没人说话的素材不要跑**：VAD 会把整段过滤掉，结果是 0 段 + 退出 4。
 先确认有音轨；没有就直接告诉用户这件事做不了（要字幕只能人工听写）。
+
+`--summary llm` 会把逐字稿发出去：只在用户明确同意用外部模型时才加，并且 `--llm-url`
+必须是 https 或本机 http（vsum 会拒绝其它目标与跨主机重定向）。key 用环境变量
+`VSUM_LLM_KEY`，不要写进命令行。
 
 ### 抖音链接必须请用户本人扫码
 
@@ -90,7 +94,7 @@ vsum login douyin            # 会打开可见的 Chrome/Edge 窗口等扫码，
 转写对插件名、包名、人名几乎必错，换大模型也不解决。**画面上出现的拼写是权威的**：
 
 ```bash
-pip install 'vsum[ocr]'              # 一次性
+pip install 'vsum[ocr] @ git+https://github.com/mudwing-chen/vsum'   # 一次性
 vsum ocr out/                        # 抽低置信帧 + OCR，出 ocr.md / ocr.json
 vsum ocr out/ --every 30             # 扫标题卡/信息卡
 vsum fix out/                        # 预演，不写文件
@@ -106,7 +110,8 @@ vsum export --segments out/segments.fixed.json -o out2/
 
 ## 6. 重写摘要
 
-要重写就覆盖 `summary.md`，**保留每条的 `[mm:ss]`**：
+要重写就写**新文件 `summary.agent.md`**，别覆盖 `summary.md`——那份过了回查门（要点必须是原文
+子串），是唯一能对账的版本；覆盖掉就再也没法验了，交付时把两份都留给用户。要点**保留每条的 `[mm:ss]`**：
 
 1. 一句话摘要
 2. 故事线 / 论证结构
@@ -140,6 +145,8 @@ vsum fetch "<链接>" -o out/x         # 只下载，不转写
 | 显存不足 | 自动降档（batch 减半 → compute → 模型 → CPU，最多 3 次，记在 `decode.fallbacks`）；仍失败再手动降 `--model` 或设 `WHISPER_COMPUTE=int8` |
 | 字幕条目少于段数 | 正常：空文本 / 负时间 / 零时长被修正，逐条记在 `manifest.export.invalid_cues` |
 | `ffmpeg 抽不出音频` | 退出 2，不是缺依赖：输入文件损坏或不是音视频 |
+| `UnicodeDecodeError: 'gbk' codec ...` | 解析 vsum 输出时没按 UTF-8 解码（管道输出是 UTF-8）；读子进程输出要显式 `encoding="utf-8"`，或设 `VSUM_IO_ENCODING=gbk` |
+| `没有识别到任何语音` | 退出 4：静音/纯音乐，或 VAD 太严；`--vad-threshold` 或 `--no-vad` 再试 |
 
 更多：[references/troubleshoot.md](references/troubleshoot.md)（依赖与故障）、
 [references/platform.md](references/platform.md)（浏览器、登录、风控、批量）、

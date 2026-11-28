@@ -6,14 +6,17 @@
 - 官方 detail 接口带签名校验，直接用 requests 打会 403；
 - 在浏览器上下文里 `fetch(..., {credentials:'include'})`，签名由页面自己的 JS 附带。
 """
+import ipaddress
 import json
 import os
 import re
-import shutil
+import socket
 import subprocess
 import time
 import urllib.parse
 import urllib.request
+
+from .toolpath import which
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -24,6 +27,12 @@ HOSTS = (
     ("bilibili", ("bilibili.com", "b23.tv")),
     ("youtube", ("youtube.com", "youtu.be")),
 )
+
+# 直链下载只允许这些域名（含子域）。play_addr 来自接口返回体，不能当可信输入：
+# 否则一个被篡改/风控污染的响应就能让 vsum 去下载任意 URL（内网探测、file:// 读本地文件）。
+DOWNLOAD_HOSTS = ("douyin.com", "douyinvod.com", "bytecdn.cn", "bilivideo.com",
+                  "bilibili.com", "akamaized.net", "googlevideo.com", "youtube.com",
+                  "ytimg.com")
 
 # 小到这个程度的「视频」肯定是错误页/半截文件
 MIN_BYTES = 64 * 1024
@@ -79,18 +88,121 @@ def detect(url):
     return None
 
 
+def _host_allowed(host):
+    host = (host or "").lower().rstrip(".")
+    for domain in DOWNLOAD_HOSTS:
+        if host == domain or host.endswith("." + domain):
+            return True
+    return False
+
+
+def _resolve_hits(host):
+    """DNS 解析。单独包一层是为了测试能 monkeypatch（不真解析、不联网）。"""
+    return socket.getaddrinfo(host, None)
+
+
+def _check_url(url):
+    """下载地址闸门：只允许 https + 白名单域名 + 解析结果不是内网/保留地址。
+
+    play_addr 是接口返回体里的字段（页面上下文取得，可能被风控页/篡改影响），
+    urlopen 本身还会接受 file:// 和任意重定向，所以在这里一次性挡掉。
+    """
+    raw = (url or "").strip()
+    try:
+        parsed = urllib.parse.urlparse(raw)
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError as exc:
+        raise FetchError("看不懂的下载地址：%s（%s）" % (raw[:120], exc))
+    if parsed.scheme.lower() != "https":
+        raise FetchError("拒绝下载这个地址（只允许 https）：%s" % (raw[:120] or "(空)"))
+    if not host or not _host_allowed(host):
+        raise FetchError("拒绝下载这个地址（不在允许的域名里）：%s" % raw[:120])
+    try:
+        hits = _resolve_hits(host)
+    except (OSError, UnicodeError) as exc:
+        raise FetchError("解析不了下载地址的域名：%s（%s）" % (host, exc))
+    if not hits:
+        raise FetchError("解析不了下载地址的域名：%s" % host)
+    for hit in hits:
+        try:
+            addr = hit[4][0]
+        except (IndexError, TypeError):
+            raise FetchError("下载地址解析结果看不懂：%s" % (hit,))
+        try:
+            ip = ipaddress.ip_address(str(addr).split("%")[0])
+        except ValueError:
+            raise FetchError("下载地址解析出看不懂的 IP：%s" % (addr,))
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            raise FetchError("拒绝下载这个地址（解析到内网/保留地址 %s）：%s" % (addr, host))
+
+
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """只跟随同 host:port 的重定向。
+
+    CDN 在自家域名之间跳（同一个 host 换路径）是正常的；跳到别的域名一律拒绝，
+    否则白名单只挡住第一跳，后续跳转可以把人带到任意地址。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            old = urllib.parse.urlsplit(req.full_url)
+            new = urllib.parse.urlsplit(newurl)
+        except ValueError as exc:
+            raise FetchError("重定向地址看不懂：%s（%s）" % (newurl[:120], exc))
+        if (new.scheme.lower(), new.hostname, new.port) != (old.scheme.lower(), old.hostname, old.port):
+            raise FetchError("拒绝跟随跨域名重定向：%s → %s" % (old.netloc, new.netloc))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class _AllowedHostRedirect(urllib.request.HTTPRedirectHandler):
+    """页面跳转用的宽松版：允许跳到白名单内的另一个域名。
+
+    抖音短链就是 v.douyin.com → www.douyin.com/video/…，跨了 host 但仍是自家域名；
+    下载直链用上面那个严格版（CDN 不该带着 Referer/授权乱跳）。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(), _SameHostRedirect())
+_PAGE_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(), _AllowedHostRedirect())
+
+
 def _http_get(url, referer=None, timeout=20):
+    _check_url(url)
     req = urllib.request.Request(url, headers={
         "User-Agent": UA,
         "Referer": referer or url,
     })
-    return urllib.request.urlopen(req, timeout=timeout)
+    return _OPENER.open(req, timeout=timeout)
+
+
+def _inside(path, root):
+    """path 的真实路径是否落在 root 里面（含等于 root）。用于挡住 play.json 里伪造的路径。"""
+    try:
+        real = os.path.realpath(path)
+        base = os.path.realpath(root)
+    except OSError:
+        return False
+    if real == base:
+        return True
+    try:
+        return os.path.commonpath([real, base]) == base
+    except ValueError:   # Windows 上不同盘符没法取公共前缀
+        return False
 
 
 def resolve_redirect(url, timeout=15):
     """短链（v.douyin.com/xxx）跟到最终页面。失败就原样返回。"""
     try:
-        with _http_get(url, timeout=timeout) as r:
+        _check_url(url)
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": url})
+        with _PAGE_OPENER.open(req, timeout=timeout) as r:
             return r.geturl() or url
     except Exception:
         return url
@@ -105,20 +217,26 @@ def aweme_id_of(url):
 
 
 def _pick_play_url(detail):
+    """挑码率最高的直链，但只在允许的域名里挑：接口给什么都不能照单全收。"""
     video = detail.get("video") or {}
     rates = video.get("bit_rate") or []
     best = None
     for r in rates:
         addr = (r.get("play_addr") or {}).get("url_list") or []
-        if not addr:
-            continue
         score = r.get("bit_rate") or 0
-        if best is None or score > best[0]:
-            best = (score, addr[0])
+        for u in addr:
+            if not _host_allowed(_host_of(u)):
+                continue
+            if best is None or score > best[0]:
+                best = (score, u)
+            break
     if best:
         return best[1]
     addr = (video.get("play_addr") or {}).get("url_list") or []
-    return addr[0] if addr else None
+    for u in addr:
+        if _host_allowed(_host_of(u)):
+            return u
+    return None
 
 
 def _looks_like_html(head, content_type=""):
@@ -145,6 +263,7 @@ def _download(url, path, referer="https://www.douyin.com/", attempts=2):
     已经下好的 video.mp4 抹掉。现在失败只删 .part，旧文件一动不动。
     """
     tmp = path + ".part"
+    _check_url(url)
     last = None
     for attempt in range(1, attempts + 1):
         total = 0
@@ -210,13 +329,21 @@ def _reusable(out_dir, url):
     if (prev.get("source_url") or "").strip() != (url or "").strip():
         return None
     video = prev.get("video")
-    if not video or not os.path.exists(video):
+    if not video:
         return None
+    if not os.path.isabs(video):
+        video = os.path.join(out_dir, video)
+    # play.json 可能是别人给的目录里的文件：指向 out_dir 外面的路径一律不认，
+    # 否则 .ssh/id_rsa 只要大于 64KB 就会被当成「上次下好的视频」送进 ffmpeg
+    if not _inside(video, out_dir) or not os.path.exists(video):
+        return None
+    video = os.path.abspath(video)
     try:
         if os.path.getsize(video) < MIN_BYTES:
             return None
     except OSError:
         return None
+    prev["video"] = video
     return prev
 
 
@@ -314,7 +441,7 @@ def douyin(url, out_dir, browser=None, dry_run=False, headless=None, profile=Non
 
     play = _pick_play_url(detail)
     if not play:
-        raise FetchError("没有可用的 play_addr（可能是图文帖）")
+        raise FetchError("没有可用的 play_addr（可能是图文帖，或返回的地址不在允许的域名里）")
     duration = round((detail.get("video") or {}).get("duration", 0) / 1000.0, 1)
     return {
         "ok": True, "kind": "douyin", "url": page_url, "awemeId": aid,
@@ -334,7 +461,7 @@ def _outtmpl(out_dir):
 
 def ytdlp(url, out_dir, dry_run=False):
     if dry_run:
-        have = shutil.which("yt-dlp")
+        have = which("yt-dlp")
         try:
             import yt_dlp  # noqa: F401
             have = have or "python:yt_dlp"

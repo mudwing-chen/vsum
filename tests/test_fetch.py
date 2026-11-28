@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import types
+import urllib.request
 from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -68,8 +69,25 @@ tmp = os.path.join(HERE, "_tmp_fetch")
 os.makedirs(tmp, exist_ok=True)
 out = os.path.join(tmp, "out")
 
+# dry-run 不许联网（L-14）：起一个「先打补丁再跑 CLI」的子进程，把
+# fetch.resolve_redirect 换成恒等函数。这样 argv / 退出码 / stdout 仍然是真路径。
+_runner = os.path.join(tmp, "offline_cli.py")
+with open(_runner, "w", encoding="utf-8") as fh:
+    fh.write("import sys\n"
+             "sys.path.insert(0, %r)\n"
+             "from vsum import fetch\n"
+             "fetch.resolve_redirect = lambda url, timeout=15: url\n"
+             "from vsum import cli\n"
+             "sys.exit(cli.main(sys.argv[1:]))\n" % ROOT)
+
+
+def run_offline(*argv):
+    return subprocess.run([sys.executable, _runner] + list(argv), cwd=ROOT,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+
 try:
-    r = run("fetch", "https://v.douyin.com/abc123/", "-o", out, "--dry-run")
+    r = run_offline("fetch", "https://v.douyin.com/abc123/", "-o", out, "--dry-run")
     check("dry-run 退出 0", r.returncode == 0, (r.returncode, r.stderr))
     check("dry-run 打印计划", "计划" in r.stdout, r.stdout)
     check("dry-run 不建目录", not os.path.isdir(out), out)
@@ -78,14 +96,37 @@ try:
     check("不认识的链接退出 4", r2.returncode == 4, (r2.returncode, r2.stderr))
     check("错误走 stderr 且无 traceback", "Traceback" not in r2.stderr and r2.stderr.startswith("error:"), r2.stderr)
 
-    r3 = run("fetch", "https://v.douyin.com/abc/", "-o", out, "--dry-run", "--browser", "chrome")
+    r3 = run_offline("fetch", "https://v.douyin.com/abc/", "-o", out, "--dry-run", "--browser", "chrome")
     check("能强制指定浏览器", r3.returncode == 0 and "chrome" in r3.stdout, (r3.returncode, r3.stdout, r3.stderr))
 
-    r4 = run("fetch", "https://v.douyin.com/abc/", "-o", out, "--dry-run", "--browser", "edge", "--headless", "--profile", "/tmp/vsum-p")
+    r4 = run_offline("fetch", "https://v.douyin.com/abc/", "-o", out, "--dry-run", "--browser", "edge", "--headless", "--profile", "/tmp/vsum-p")
     check("edge + headless + profile 参数可达", r4.returncode == 0 and "edge" in r4.stdout, (r4.returncode, r4.stdout, r4.stderr))
     check("dry-run 不建 profile 目录", not os.path.isdir("/tmp/vsum-p"), "")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+# dry-run 在本进程里也不碰网络/浏览器：_http_get 一被调用就炸，dry_run 仍应正常返回
+_get_dry = fetch._http_get
+_redirect_dry = fetch.resolve_redirect
+_open_dry = browser.open_browser
+
+
+def _boom(*a, **kw):
+    raise AssertionError("dry-run 不该发起网络请求")
+
+
+try:
+    fetch._http_get = _boom
+    fetch.resolve_redirect = lambda url, timeout=15: url
+    browser.open_browser = _boom
+    plan = fetch.douyin("https://v.douyin.com/abc123/", os.path.join(tmp, "x"), dry_run=True)
+    check("dry-run 不联网就出计划", plan.get("dry_run") is True, plan)
+    check("dry-run 计划带浏览器名", plan.get("browser") == "auto", plan)
+finally:
+    fetch._http_get = _get_dry
+    fetch.resolve_redirect = _redirect_dry
+    browser.open_browser = _open_dry
 
 # yt-dlp 路径也要写 play.json（v0.3 说「仅链接输入」，不只抖音）
 tmp_yt = os.path.join(HERE, "_tmp_fetch_yt")
@@ -146,7 +187,11 @@ _OLD = b"OLD-GOOD-VIDEO" * 4
 
 dl_dir = tempfile.mkdtemp(prefix="vsum-fetch-dl-")
 _get = fetch._http_get
+_hits = fetch._resolve_hits
+_DL_URL = "https://v3-web.douyinvod.com/aweme/v1/play/x"
 try:
+    # 下载闸门会解析域名：测试里给一个假的公网地址，不真的查 DNS
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("93.184.216.34", 0))]
     good = os.path.join(dl_dir, "video.mp4")
     with open(good, "wb") as fh:
         fh.write(_OLD)
@@ -155,7 +200,7 @@ try:
     fetch._http_get = lambda *a, **kw: _FakeResp(
         body=b"\x00" * (fetch.MIN_BYTES * 2), fail_after=fetch.MIN_BYTES // 2)
     try:
-        fetch._download("https://cdn.example/x", good, attempts=1)
+        fetch._download(_DL_URL, good, attempts=1)
         check("半截下载要抛 FetchError", False)
     except fetch.FetchError as exc:
         check("半截下载要抛 FetchError", "直链下载失败" in str(exc), str(exc))
@@ -167,7 +212,7 @@ try:
     fetch._http_get = lambda *a, **kw: _FakeResp(
         body=b"<!DOCTYPE html><html>risk control</html>", content_type="text/html; charset=utf-8")
     try:
-        fetch._download("https://cdn.example/x", good, attempts=1)
+        fetch._download(_DL_URL, good, attempts=1)
         check("HTML 页面当视频要报错", False)
     except fetch.FetchError as exc:
         check("HTML 页面当视频要报错", "HTML" in str(exc), str(exc))
@@ -177,20 +222,101 @@ try:
     # 3) 没有 Content-Type，但正文以 '<' 开头（有的错误页就这样）
     fetch._http_get = lambda *a, **kw: _FakeResp(body=b"  <html>blocked</html>")
     try:
-        fetch._download("https://cdn.example/x", good, attempts=1)
+        fetch._download(_DL_URL, good, attempts=1)
         check("正文以 < 开头也要拒", False)
     except fetch.FetchError as exc:
         check("正文以 < 开头也要拒", "HTML" in str(exc), str(exc))
 
     # 4) 正常下载：原子替换成新内容，不留 .part
     fetch._http_get = lambda *a, **kw: _FakeResp(body=_GOOD_BODY, content_type="video/mp4")
-    size = fetch._download("https://cdn.example/x", good, attempts=1)
+    size = fetch._download(_DL_URL, good, attempts=1)
     check("下载成功返回字节数", size == len(_GOOD_BODY), size)
     check("成功时原子替换成新视频", read_bytes(good) == _GOOD_BODY)
     check("成功不留 .part", not os.path.exists(good + ".part"))
+
+    # 5) 下载闸门放在重试循环之前：地址不合规立刻拒绝，不用先试两次
+    fetch._http_get = lambda *a, **kw: _FakeResp(body=_GOOD_BODY)
+    try:
+        fetch._download("http://v3-web.douyinvod.com/x", good, attempts=2)
+        check("闸门拒绝不会走重试", False)
+    except fetch.FetchError as exc:
+        check("闸门拒绝不会走重试", "只允许 https" in str(exc), str(exc))
+        check("闸门拒绝不动旧文件", read_bytes(good) == _GOOD_BODY)
 finally:
     fetch._http_get = _get
+    fetch._resolve_hits = _hits
     shutil.rmtree(dl_dir, ignore_errors=True)
+
+
+# 下载地址白名单（M-6）：play_addr 是接口返回的，不能当可信输入
+def _url_rejected(url):
+    try:
+        fetch._check_url(url)
+        return False
+    except fetch.FetchError:
+        return True
+
+
+_hits2 = fetch._resolve_hits
+try:
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("93.184.216.34", 0))]
+    check("https + 抖音 CDN 域名放行",
+          fetch._check_url("https://v3-web.douyinvod.com/aweme/v1/play/x") is None)
+    check("子域放行（v1.ytimg.com）", fetch._check_url("https://v1.ytimg.com/x") is None)
+    check("http:// 非回环被拒", _url_rejected("http://v3-web.douyinvod.com/x"))
+    check("file:// 被拒", _url_rejected("file:///etc/passwd"))
+    check("ftp:// 被拒", _url_rejected("ftp://v1.ytimg.com/x"))
+    check("不在白名单的域名被拒", _url_rejected("https://evil.example/x"))
+    check("长得像白名单的域名被拒", _url_rejected("https://douyinvod.com.evil.cn/x"))
+    check("白名单域名的父域被拒", _url_rejected("https://vod.douyinvod.cn/x"))
+
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("127.0.0.1", 0))]
+    check("解析到回环地址被拒", _url_rejected("https://v3-web.douyinvod.com/x"))
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("10.1.2.3", 0))]
+    check("解析到内网 IP 被拒", _url_rejected("https://v3-web.douyinvod.com/x"))
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("192.168.1.5", 0))]
+    check("解析到 192.168 被拒", _url_rejected("https://v3-web.douyinvod.com/x"))
+    fetch._resolve_hits = lambda host: [(2, 1, 6, "", ("169.254.169.254", 0))]
+    check("解析到链路本地/元数据地址被拒", _url_rejected("https://v3-web.douyinvod.com/x"))
+    fetch._resolve_hits = lambda host: [(10, 1, 6, "", ("::1", 0, 0, 0))]
+    check("解析到 IPv6 回环被拒", _url_rejected("https://v3-web.douyinvod.com/x"))
+    fetch._resolve_hits = lambda host: []
+    check("解析不出地址要报 FetchError", _url_rejected("https://v3-web.douyinvod.com/x"))
+
+    def _dns_fail(host):
+        raise OSError("Name or service not known")
+
+    fetch._resolve_hits = _dns_fail
+    check("DNS 失败要报 FetchError", _url_rejected("https://v3-web.douyinvod.com/x"))
+finally:
+    fetch._resolve_hits = _hits2
+
+
+# 重定向：同 host:port 才跟随，跨域名一律拒绝
+_redirect = fetch._SameHostRedirect()
+_req = urllib.request.Request("https://v3-web.douyinvod.com/aweme/v1/play/x")
+try:
+    _redirect.redirect_request(_req, None, 302, "Found", {},
+                               "https://v3-web.douyinvod.com/aweme/v1/play/y")
+    check("同域名重定向放行", True)
+except fetch.FetchError as exc:
+    check("同域名重定向放行", False, str(exc))
+try:
+    _redirect.redirect_request(_req, None, 302, "Found", {}, "https://evil.example/x")
+    check("跨域名重定向被拒", False)
+except fetch.FetchError as exc:
+    check("跨域名重定向被拒", "跨域名重定向" in str(exc), str(exc))
+try:
+    _redirect.redirect_request(_req, None, 302, "Found", {}, "http://v3-web.douyinvod.com/x")
+    check("重定向到 http 被拒", False)
+except fetch.FetchError as exc:
+    check("重定向到 http 被拒", "跨域名重定向" in str(exc), str(exc))
+try:
+    _redirect.redirect_request(_req, None, 302, "Found", {},
+                               "https://v3-web.douyinvod.com:8443/x")
+    check("同域名换端口也被拒", False)
+except fetch.FetchError as exc:
+    check("同域名换端口也被拒", "跨域名重定向" in str(exc), str(exc))
 
 
 # yt-dlp 的 ydl_opts：不能顺着播放列表下，outtmpl 里的 % 要转义
@@ -293,6 +419,47 @@ try:
     check("play.json 都没有时不复用", fetch._reusable(os.path.join(small_dir, "nope"), "x") is None)
 finally:
     shutil.rmtree(small_dir, ignore_errors=True)
+
+
+# play.json 是外部数据：指向 out_dir 外面的路径不能当「上次下好的视频」用（M-6）
+evil_root = tempfile.mkdtemp(prefix="vsum-fetch-evil-")
+try:
+    evil_out = os.path.join(evil_root, "out")
+    os.makedirs(evil_out)
+    outside = os.path.join(evil_root, "id_rsa")
+    with open(outside, "wb") as fh:
+        fh.write(b"k" * (fetch.MIN_BYTES + 1))
+    with open(os.path.join(evil_out, "play.json"), "w", encoding="utf-8") as fh:
+        json.dump({"source_url": "https://b23.tv/evil", "video": outside}, fh)
+    check("play.json 指向 out_dir 外不复用",
+          fetch._reusable(evil_out, "https://b23.tv/evil") is None)
+
+    # 相对路径也要落在 out_dir 里，别跟着 cwd 走
+    with open(os.path.join(evil_out, "play.json"), "w", encoding="utf-8") as fh:
+        json.dump({"source_url": "https://b23.tv/evil", "video": "../../id_rsa"}, fh)
+    check("相对路径跳出 out_dir 不复用",
+          fetch._reusable(evil_out, "https://b23.tv/evil") is None)
+
+    # out_dir 里的软链接指到外面：realpath 之后就出去了，同样不认
+    link = os.path.join(evil_out, "video.mp4")
+    try:
+        os.symlink(outside, link)
+        with open(os.path.join(evil_out, "play.json"), "w", encoding="utf-8") as fh:
+            json.dump({"source_url": "https://b23.tv/evil", "video": link}, fh)
+        check("out_dir 内指向外部的软链接不复用",
+              fetch._reusable(evil_out, "https://b23.tv/evil") is None)
+    except (OSError, NotImplementedError):   # Windows 无权限建软链接就跳过
+        pass
+
+    inside = os.path.join(evil_out, "good.mp4")
+    with open(inside, "wb") as fh:
+        fh.write(b"v" * (fetch.MIN_BYTES + 1))
+    with open(os.path.join(evil_out, "play.json"), "w", encoding="utf-8") as fh:
+        json.dump({"source_url": "https://b23.tv/evil", "video": inside}, fh)
+    check("out_dir 内的视频照常复用",
+          (fetch._reusable(evil_out, "https://b23.tv/evil") or {}).get("video") == inside)
+finally:
+    shutil.rmtree(evil_root, ignore_errors=True)
 
 # 不认识的链接：先认类型再建目录，别在磁盘上留一个空目录
 leftover = os.path.join(tempfile.mkdtemp(prefix="vs-fetch-"), "should-not-exist")

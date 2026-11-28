@@ -2,12 +2,12 @@
 """一条命令的主流程：媒体/链接 -> audio.wav -> 转写（可复用）-> 四件套 + 摘要 + result.json。"""
 import json
 import os
-import shutil
 import subprocess
 import time
 
-from . import (__version__, clean, export, manifest as manifest_mod, result as result_mod,
-               summary as summary_mod, termrules, transcribe as tr)
+from . import (__version__, atomic, clean, export, manifest as manifest_mod,
+               result as result_mod, summary as summary_mod, termrules, toolpath,
+               transcribe as tr)
 
 
 class InputError(RuntimeError):
@@ -15,7 +15,7 @@ class InputError(RuntimeError):
 
 
 def ffmpeg_path():
-    path = shutil.which("ffmpeg")
+    path = toolpath.which("ffmpeg")
     if not path:
         raise tr.DependencyError("ffmpeg 未找到：macOS 用 brew install ffmpeg，"
                                  "Debian/Ubuntu 用 apt install ffmpeg，"
@@ -30,7 +30,7 @@ def probe_duration(path):
     ffmpeg 转出来的 16k 单声道 PCM——读它是纯 stdlib 的事，没必要因为缺 ffprobe
     就让 manifest 的时长永远是 null。
     """
-    probe = shutil.which("ffprobe")
+    probe = toolpath.which("ffprobe")
     if probe:
         try:
             out = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration",
@@ -77,7 +77,7 @@ def audio_reusable(src, wav, out_dir):
 
 def has_audio_stream(path):
     """有音频流返回 True，没有返回 False，探不出来返回 None（不阻塞主流程）。"""
-    probe = shutil.which("ffprobe")
+    probe = toolpath.which("ffprobe")
     if not probe:
         return None
     try:
@@ -230,6 +230,9 @@ def run(src, out_dir, model="small", language="zh", pack=None,
     if not os.path.exists(src):
         raise InputError("找不到输入文件：%s" % src)
     os.makedirs(out_dir, exist_ok=True)
+    stale = os.path.join(out_dir, "result.json")
+    if os.path.exists(stale):
+        os.remove(stale)
 
     reused, segments, why = segments_reusable(out_dir, src, model, force, language, context,
                                               words=words, pack=pack, decode_opts=opts)
@@ -281,8 +284,7 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         segments, meta, summary_mode, llm_url, llm_model, rules=rules, llm_key=llm_key)
     summary_path = os.path.join(out_dir, "summary.md")
     if md_text:
-        with open(summary_path, "w", encoding="utf-8") as fh:
-            fh.write(md_text)
+        atomic.write_text(summary_path, md_text)
         outputs["summary"] = summary_path
     elif os.path.exists(summary_path):
         os.remove(summary_path)
@@ -296,6 +298,10 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         for fb in decode.get("fallbacks") or []:
             decode_warnings.append("转写降档（%s）：%s → %s" % (
                 fb.get("reason"), fb.get("from"), fb.get("to")))
+    hf_endpoint = decode.get("hf_endpoint")
+    if hf_endpoint and "huggingface.co" not in hf_endpoint:
+        warnings.append("模型来自镜像 %s（vsum 不校验权重摘要），需要严格复现时请固定模型目录"
+                        % hf_endpoint)
     warnings = list(fetch_warnings) + decode_warnings + list(summary_warnings)
     if export_warnings["invalid_cues"]:
         warnings.append("导出时修正了 %d 条异常 cue（空文本/负时间/零时长）"
@@ -320,12 +326,15 @@ def run(src, out_dir, model="small", language="zh", pack=None,
         "low_conf": len(meta["low_conf"]),
         "corrections_applied": sum(1 for r in corrections if r.get("applied")),
     }
+    # overview_verified 只对抽取式为真：LLM 的「一句话」是模型改写，回查门只约束要点
+    summary_info = {"mode": used_mode, "bullets": bullets, "dropped": dropped,
+                    "overview_verified": used_mode != "llm"}
     # manifest 先写、result.json 最后写：result.json 里的 ok 是「这一轮跑完了」的唯一
     # 凭据（batch 靠它跳过），它必须最后一个落地，中途失败时目录里不能有半新半旧的组合。
     man = manifest_mod.build(src, wav, decode, segments, outputs, warnings, terms_path=pack,
                              duration=duration, mode="clean" if clean_mode else "verbatim",
                              version=__version__, source_url=source_url,
-                             summary={"mode": used_mode, "bullets": bullets, "dropped": dropped},
+                             summary=summary_info,
                              export=export_warnings)
     manifest_mod.write(man, os.path.join(out_dir, "manifest.json"))
 
@@ -339,7 +348,7 @@ def run(src, out_dir, model="small", language="zh", pack=None,
                            {"kind": fetch_mod_kind(source_url) if source_url else "file",
                             "url": source_url, "input": os.path.basename(src)},
                            counts, reused,
-                           {"mode": used_mode, "bullets": bullets, "dropped": dropped},
+                           summary_info,
                            artifacts, sha, warnings, time.time() - t0, __version__)
     result_path = result_mod.write(res, out_dir)
     outputs["result"] = result_path

@@ -222,6 +222,79 @@
   `export.low_conf_indexes()`），`test_transcribe` 断言 25 段时报的条数就是 `counts` 的值。
   之前看到的「`n=10` 而 `low_conf=2`」是 0.6.1 及更早的分位口径，已在第二轮修掉。
 
+### 第六轮复查（第三方安全审计）
+
+一轮 Windows 11 + cp936 环境下的外部审计（0 Critical / 1 High / 10 Medium / 19 Low）。
+这轮按「信任边界」重收：谁能影响产物、哪些路径和 URL 算输入、哪里会因为环境编码崩。
+
+#### 安全与信任边界（会改变行为）
+
+- **LLM API key 不再跟随跨主机重定向**（High）：urllib 默认在 302 时保留 `Authorization`，
+  一次网关跳转就能把长期 key 交给别人的域名。现在自定义 opener 只放行同源重定向，
+  `--llm-url` 只接受 https 或指向本机的 http（明文 http 打到别的机器直接退出 2）。
+- **LLM 响应有上限**：单次读入 8 MB 封顶，`Content-Type` 不是 JSON 时记 warning；
+  `"sec": 1e999` 这类非有限数当成「定位不到」，不再 `OverflowError` 穿透成 traceback。
+- **综述不再只验时间戳**：`--summary llm` 的「一句话」超过 200 字、或时间引用在原文里
+  找不到，整段删除并记 warning；`result.json` 的 `summary.overview_verified` 明确标出
+  「这句话没逐字校验」。
+- **下载地址与 play.json 路径要自证**：直链只允许 https + 白名单域名 + 非内网解析结果，
+  只跟随同 host:port 的重定向；`play.json` 里的 `video` 必须落在产物目录内（软链也算），
+  否则不复用。以前 `urlopen` 还接受 `file://`。
+- **`clip` / `ocr` 只认能自证的输入路径**：`manifest.input.path` 在产物目录内，或 sha256
+  与 manifest 一致，否则退出 2——别人给的产物目录里，那个字段可以指向任意文件。
+- **产物原子写**：新增 `vsum/atomic.py`（同目录临时文件 + `os.replace` + fsync），
+  `manifest.json`、`result.json`、`segments.json`、`transcript.*`、`summary.md`、`ocr.*` 全部改走它。
+  另外每轮开跑前先删掉旧的 `result.json`：它是「这一轮跑完了」的唯一凭据，导出中途失败时
+  不能留着上一轮的 `ok: true` 让人误判成功。
+- **外部二进制不再用 `shutil.which`**：Windows 上它会把当前目录前置，别人给的目录里放个
+  `ffmpeg.EXE` 就能抢先执行。新增 `vsum/toolpath.py`，PATH 里剔除空项与 `.`/`..`。
+- **浏览器 profile 收成 0700**，并在登录成功后提示「这个目录等同于账号凭据」；
+  `bench --synth` 改用 `mkstemp`，不再用可预测的固定临时文件名。
+- **`vsum batch --jobs` 的子进程不再继承 LLM key**（batch 只跑抽取式摘要，用不到它）。
+
+#### 不再误导（产物不变，报错/提示变了）
+
+- **`vsum doctor` 不再把 ffprobe 当必需**：vsum 自己不用它（时长退回 PyAV / wav 头），
+  缺了只是少一个 `duration`，现在降为 `warn`。
+- **`doctor` 加 `dist` 行**：PyPI 上的 `vsum` 是另一个项目，装错时直接报出来；
+  `browser` / `yt` / `ocr` 的安装提示改成 `包名[extra] @ git+…` 的写法。
+- **`--lang en` 不再喂中文提示词**：默认提示词按语言选（zh / en / 空），`config_sha256`
+  跟着变，换语言必然重转写。
+- **`--lang auto` 记检测到的语言**：`manifest.decode.detected_language` 记 Whisper 判定的
+  语言，`transcript.md` 头部不再写 `language: auto`。
+- **`HF_ENDPOINT` 非官方镜像时给出提示**：`decode.hf_endpoint` 进 manifest，warnings
+  说明「模型来源不可认证」，需要严格复现就用本地模型目录。
+- **`vsum export` 不再接受空 segments**（退出 2）；`--clean` 的帮助说明改成实际产物
+  `transcript.clean.md`，清洗稿不再带「术语修订」附录。
+- **负时间被夹到 0 后不会叠出重叠 cue**：新增 `overlap_after_fix` 修正原因。
+- **`vsum help help` 打印总览**（退出 0），不再报「没有这个子命令」。
+- **抓取先识别链接再建目录**：不认识的链接不再留下空目录。
+- **`--devices` 配 `--jobs 1` 也生效**（取第一个），提示区分「没给 --devices」和「没探测到卡」。
+- **`counts` 五键**（ok / skipped / failed / interrupted / pending）在 `batch.json` 里自洽；
+  失败任务的日志落在 `<out>/.logs/`，失败不再留下空目录。
+- **`holdout.json` 默认写到当前目录**，不再往语料目录里塞文件。
+- **输出编码可覆盖**：管道输出仍是 UTF-8，但支持 `VSUM_IO_ENCODING=gbk` 让父进程按 locale
+  解码也不崩（中文 Windows 的 `subprocess.run(text=True)` 默认按 cp936 解码）。
+- **manifest / result 不再写绝对路径**：产物目录内的 `input.path` / `audio.path` 记文件名
+  （目录外的输入保留原样，那是定位所必需的），`result.out` 只记目录名——产物发给别人时
+  不会带上本机用户名。
+- **`--model auto` 在 bench 里也解析**：`doctor` 推荐 `vsum bench --model auto`，以前照做会
+  因为模型名 `auto` 加载失败。
+
+#### 文档与测试
+
+- README / README.en / SKILL / references：av 不锁版本的说明、ffprobe 可选、退出码 3 与 4 的
+  分界（模型加载失败是 3）、`VSUM_IO_ENCODING`、代理行为（urllib **会**吃 `http_proxy`，
+  老文档写反了）、手工投放 driver 的信任边界、`VSUM_BROWSER_ARGS` 的注入面。
+- `docs/example/` 明确标成 fixture（`avg_logprob` 是规则化的），并去掉示例里的本机绝对路径。
+- 新增 `SECURITY.md`（信任边界、不做什么、私密报告渠道）；`.gitignore` 补 profile / `.env`；
+  CI 加最小 `permissions` 与 `timeout-minutes`；`numpy` 显式声明为直接依赖。
+- 回归：`test_llm`（同源重定向、非有限 sec、超大响应、Content-Type、综述超长）、
+  `test_fetch`（地址白名单、play.json 越界、复用边界）、`test_lookup`（manifest 越界路径）、
+  `test_ocr`（二进制查找走 toolpath）、`test_p2`（陈旧 result.json、产物路径不是绝对路径、
+  子进程显式 UTF-8）、`test_hardware` / `test_holdout` / `test_exports` / `test_batch` /
+  `test_cli`（pyproject 与包版本一致）。
+
 ## 0.6.1 — 2026-11-23
 
 `vsum ocr` 上一版**在真视频上基本没用**：60 秒跑下来 4 条候选全是噪音，真正该抓的错一个没抓到。
@@ -296,7 +369,7 @@
 - **`vsum bench` 先跑本机实际会用的 `compute_type`**：Pascal（P106 这类）上 float16 是软件
   模拟的，之前排第一，等于先白等几分钟才拿到有意义的数。
 - pyproject 补全元数据：Homepage / Source / Issues / Changelog / Releases 链接、维护者、
-  15 个 classifiers、Python 3.9–3.13 声明。
+  classifiers 全项、Python 3.9–3.13 声明。
 
 ### 修复
 

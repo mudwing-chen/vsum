@@ -91,12 +91,12 @@ check("doctor 有清单", "ffmpeg" in doc.stdout, doc.stdout[:80])
 # 没有音频流的输入要在抽音频前就报「没有东西可转写」，而不是抛 ffmpeg 的英文原文
 from vsum import pipeline  # noqa: E402
 
-_which = pipeline.shutil.which
-pipeline.shutil.which = lambda name: None
+_which = pipeline.toolpath.which
+pipeline.toolpath.which = lambda name: None
 try:
     check("没 ffprobe 时音频探测返回 None（不阻塞）", pipeline.has_audio_stream("x.mp4") is None)
 finally:
-    pipeline.shutil.which = _which
+    pipeline.toolpath.which = _which
 
 # Windows 控制台默认 cp936/cp1252：命令不能因为打印中文崩掉，管道输出要统一 UTF-8
 loop_dir = os.path.join(HERE, "fixtures", "loop")
@@ -281,6 +281,17 @@ check("清洗稿不带术语修订附录",
 check("--clean 不动 transcript.md",
       "[00:00]" in open(os.path.join(clean_out, "transcript.md"), encoding="utf-8").read())
 
+
+# 版本号写两处（pyproject 与 __init__），发版时最容易只改一处
+import re as _re  # noqa: E402
+
+from vsum import __version__ as _pkg_version  # noqa: E402
+
+_pm = _re.search(r'^version = "([^"]+)"',
+                 open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8").read(), _re.M)
+check("pyproject 与包版本一致",
+      _pm is not None and _pm.group(1) == _pkg_version,
+      (_pm.group(1) if _pm else None, _pkg_version))
 
 if FAIL:
     for f in FAIL:

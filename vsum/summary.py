@@ -5,9 +5,11 @@
 找不到就删掉并计数——宁可摘要短，也不留无法引用的句子。
 """
 import json
+import math
 import re
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import termrules
@@ -25,6 +27,12 @@ PROMPTS = ("所以", "因此", "但是", "关键", "注意", "第一", "其次",
 # LLM 摘要按字符预算切块：整份逐字稿塞一个 prompt，长视频必然超上下文。
 CHUNK_CHARS = 6000
 MAX_BULLETS = 10
+
+# LLM 响应上限：正常回复几 KB，8MB 已经宽得离谱；再大就是端点出了问题，别把内存读光。
+MAX_BYTES = 8 * 1024 * 1024
+# 综述本来就要「一句话」，200 字还装不下说明模型在写小作文，不再是可核对的东西。
+OVERVIEW_MAX = 200
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
 def norm(text):
@@ -230,14 +238,22 @@ def find_segment(sec, segments, tol=1.0, text=None):
     3. 给 text 时优先挑「文本装得下它」的那段，再用距离排序兜底
        （LLM 给的 sec 可能不准，文本对得上才是硬证据）。
     """
-    want = int(max(0.0, float(sec)))
+    try:
+        sec = float(sec)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(sec):
+        # 模型回 1e999 时 float() 得到的是合法的 inf，int(inf) 却抛 OverflowError，
+        # 它不是 ValueError，一路穿透到 CLI 变成 traceback。这里当成「定位不到」。
+        return None
     if not segments:
         return None
+    want = int(max(0.0, sec))
     near = []
     for s in segments:
         start = float(s["start"])
         end = max(start, float(s.get("end") or start))
-        if abs(start - float(sec)) <= tol or start - tol <= float(sec) <= end + tol:
+        if abs(start - sec) <= tol or start - tol <= sec <= end + tol:
             near.append(s)
     if not near:
         return None
@@ -249,7 +265,7 @@ def find_segment(sec, segments, tol=1.0, text=None):
         hits = [s for s in near if key in norm(s.get("text") or "")]
         if hits:
             near = hits
-    near.sort(key=lambda s: abs(float(s["start"]) - float(sec)))
+    near.sort(key=lambda s: abs(float(s["start"]) - sec))
     return near[0]
 
 
@@ -365,10 +381,19 @@ def _parse_reply(content):
         return None
     bullets = []
     for it in data.get("bullets") or []:
+        if not isinstance(it, dict):
+            continue
         try:
-            bullets.append({"text": str(it["text"]).strip(), "sec": float(it["sec"])})
+            sec = float(it["sec"])
         except (KeyError, TypeError, ValueError):
             continue
+        if not math.isfinite(sec):
+            # `"sec": 1e999` 是合法 JSON，json 会给出 inf；这种坐标不是时间戳，丢掉
+            continue
+        text = str(it.get("text") or "").strip()
+        if not text:
+            continue
+        bullets.append({"text": text, "sec": max(0.0, sec)})
     overview = data.get("overview")
     overview = str(overview).strip() if overview else None
     if not bullets and not overview:
@@ -376,11 +401,50 @@ def _parse_reply(content):
     return {"overview": overview, "bullets": bullets}
 
 
-def _llm_ask(chunk, base_url, model, timeout, key=None):
+def _origin(url):
+    """(scheme, host, port)；解析不出来返回 None。"""
+    try:
+        parts = urllib.parse.urlsplit(url or "")
+        return (parts.scheme.lower(), (parts.hostname or "").lower(), parts.port)
+    except ValueError:
+        return None
+
+
+def check_url(url):
+    """--llm-url 的门：https，或指向本机的 http。
+
+    明文 http 打到别的机器，等于把 Authorization 放在链路上；这种配置要在发请求前
+    就拒绝（cli 把 ValueError 映射成退出码 2），而不是发出去再指望对方不记日志。
+    """
+    origin = _origin(url)
+    if origin and origin[1] and (origin[0] == "https" or
+                                 (origin[0] == "http" and origin[1] in LOOPBACK)):
+        return url
+    raise ValueError("--llm-url 必须是 https://，或指向本机的 http://…"
+                     "（明文会把 key 暴露在链路上）")
+
+
+class SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """只放行同源重定向：换协议/主机/端口就拒。
+
+    默认 handler 转 302 时只剥 Content-Type/Length，Authorization 会原样跟过去；
+    一次网关跳转（或 DNS 被劫持的明文 http）就足够把长期 key 交给别人的域名。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = _origin(req.full_url), _origin(newurl)
+        if new is None or old != new:
+            raise urllib.error.HTTPError(
+                newurl, code, "拒绝跨主机重定向（避免把 API key 带到别的域名）", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _llm_ask(chunk, base_url, model, timeout, key=None, warnings=None):
     """对一块逐字稿问一次；返回 (reply, error)，reply 为 None 时 error 说明原因。
 
     原因要留住：摘要退回抽取式时得能告诉用户到底是没开服务、模型名不对，
     还是服务端自己起不来（Ollama 装坏了就是这个样子）。
+    warnings 收的是「不影响结果但值得说一句」的情况（比如 Content-Type 不对）。
     """
     lines = ["[%s] %s" % (_mmss(s["start"]), s["text"]) for s in chunk]
     prompt = (ASK_TEMPLATE % MAX_BULLETS) + "\n".join(lines)
@@ -392,9 +456,16 @@ def _llm_ask(chunk, base_url, model, timeout, key=None):
         headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
                                  headers=headers)
+    opener = urllib.request.build_opener(SameHostRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8", "replace"))
+        with opener.open(req, timeout=timeout) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            raw = resp.read(MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES:
+            return None, "响应超过 %d MB，已放弃解析（端点可能配错了）" % (MAX_BYTES // (1024 * 1024))
+        if ctype and "json" not in ctype and warnings is not None:
+            warnings.append("LLM 端点返回的 Content-Type 是 %s（不是 JSON），仍然尝试解析" % ctype)
+        payload = json.loads(raw.decode("utf-8", "replace"))
         content = payload["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -402,6 +473,8 @@ def _llm_ask(chunk, base_url, model, timeout, key=None):
             detail = exc.read().decode("utf-8", "replace")[:200]
         except Exception:
             pass
+        # 自己抛的重定向拒绝没有响应体，原因在 reason/msg 里，别把它丢了
+        detail = detail or str(getattr(exc, "reason", "") or exc.msg or "")
         return None, ("HTTP %s %s" % (exc.code, detail)).strip()
     except Exception as exc:
         return None, "%s: %s" % (type(exc).__name__, str(exc)[:200])
@@ -411,7 +484,8 @@ def _llm_ask(chunk, base_url, model, timeout, key=None):
     return reply, None
 
 
-def llm_bullets(segments, base_url, model, timeout=90, errors=None, key=None):
+def llm_bullets(segments, base_url, model, timeout=90, errors=None, key=None,
+                warnings=None):
     """分块调 /chat/completions，返回 (bullets, overview, 失败块数, 总块数)。
 
     单块失败不影响其他块；全部失败返回 (None, None, n, n)，由 build 退回抽取式。
@@ -419,10 +493,11 @@ def llm_bullets(segments, base_url, model, timeout=90, errors=None, key=None):
     """
     if not base_url:
         return None, None, 0, 0
+    check_url(base_url)
     parts = chunks(segments)
     got, overviews, failed = [], [], 0
     for chunk in parts:
-        reply, err = _llm_ask(chunk, base_url, model, timeout, key)
+        reply, err = _llm_ask(chunk, base_url, model, timeout, key, warnings)
         if reply:
             got.extend(reply["bullets"])
             if reply.get("overview"):
@@ -475,14 +550,22 @@ def render_llm(bullets, overview, segments, meta, model, warnings=None):
                  % (stamp, len(segments), sum(len(s["text"]) for s in segments), model or "unknown"))
     lines.append("")
     if overview:
-        if overview_supported(overview, segments):
+        text = overview.strip()
+        if len(text) > OVERVIEW_MAX:
+            if warnings is not None:
+                warnings.append("LLM 综述 %d 字，超过 %d 字上限，整段已删除"
+                                % (len(text), OVERVIEW_MAX))
+            text = ""
+        elif not overview_supported(text, segments):
+            if warnings is not None:
+                warnings.append("LLM 综述里的时间引用在原文里找不到，整段已删除")
+            text = ""
+        if text:
             lines.append("## 一句话")
-            lines.append(overview)
+            lines.append(text)
             lines.append("")
             lines.append("> 本段是模型改写，未经逐字校验；引用请以「要点」和 transcript.md 为准。")
             lines.append("")
-        elif warnings is not None:
-            warnings.append("LLM 综述里的时间引用在原文里找不到，整段已删除")
     if bullets:
         lines.append("## 要点（每条都能回查到原文）")
         for b in bullets:
@@ -511,7 +594,8 @@ def build(segments, meta, mode="extractive", llm_url=None, llm_model=None,
     if mode == "llm":
         errs = []
         items, overview, failed, total = llm_bullets(segments, llm_url, llm_model or "unknown",
-                                                     errors=errs, key=llm_key)
+                                                     errors=errs, key=llm_key,
+                                                     warnings=warnings)
         if items or overview:
             md = render_llm(items or [], overview, segments, meta, llm_model, warnings)
             if failed:

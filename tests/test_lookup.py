@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from contextlib import redirect_stderr
@@ -91,12 +92,43 @@ with redirect_stdout(buf), redirect_stderr(err):
     rc = lookup.find_main([out, "不存在的词"])
 check("未命中退出 1", rc == 1, rc)
 
-# find --context 带上下文
+# find --context 带上下文：命中行以 ">" 开头，上下文行以空格开头
 buf = io.StringIO()
 with redirect_stdout(buf):
     lookup.find_main([out, "价格", "--context", "1"])
 text = buf.getvalue()
-check("--context 带出相邻段", "它每个月 20 美元" in text or "最后说说价格" in text, text)
+marked = [l for l in text.splitlines() if l.startswith(">")]
+neighbors = [l for l in text.splitlines() if l.startswith(" ")]
+check("--context 带出相邻段",
+      len(marked) == 1 and len(neighbors) >= 1 and "20 美元" in "\n".join(neighbors),
+      text)
+
+
+# 别人给的产物目录：manifest.input.path 可以指向任意文件，不能照单全收
+import hashlib  # noqa: E402
+
+pts = os.path.join(work, "pts")
+os.makedirs(pts)
+secret = os.path.join(work, "secret.txt")
+with open(secret, "w", encoding="utf-8") as fh:
+    fh.write("x" * 100)
+with open(os.path.join(pts, "segments.json"), "w", encoding="utf-8") as fh:
+    json.dump({"segments": SEGS}, fh, ensure_ascii=False)
+with open(os.path.join(pts, "manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump({"input": {"path": secret, "sha256": "0" * 64}}, fh)
+buf, err = io.StringIO(), io.StringIO()
+try:
+    with redirect_stdout(buf), redirect_stderr(err):
+        lookup.clip_main([pts, "00:03", "-o", os.path.join(work, "x.mp4")])
+    check("manifest 越界路径要报错", False)
+except ValueError as exc:
+    check("manifest 越界路径要报错", "sha256" in str(exc), exc)
+
+with open(os.path.join(pts, "manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump({"input": {"path": secret,
+                         "sha256": hashlib.sha256(b"x" * 100).hexdigest()}}, fh)
+check("sha256 对得上就认",
+      lookup._source_media(pts)[0] == secret, lookup._source_media(pts))
 
 # clip：没有原视频时必须明确报错，而不是剪出个空文件
 buf, err = io.StringIO(), io.StringIO()
@@ -110,6 +142,26 @@ buf, err = io.StringIO(), io.StringIO()
 with redirect_stdout(buf), redirect_stderr(err):
     rc = lookup.clip_main([out, "30:00", "-o", os.path.join(work, "clip2.mp4")])
 check("clip 时间点太远退出 2", rc == 2, (rc, err.getvalue()))
+
+# clip 成功路径：有 ffmpeg 就真剪一段出来（只剪音频，不需要真视频）
+from vsum.toolpath import which as _which  # noqa: E402
+
+if _which("ffmpeg"):
+    cdir = os.path.join(work, "clip")
+    os.makedirs(cdir, exist_ok=True)
+    with open(os.path.join(cdir, "segments.json"), "w", encoding="utf-8") as fh:
+        json.dump({"segments": SEGS}, fh, ensure_ascii=False)
+    _wav = os.path.join(cdir, "audio.wav")
+    subprocess.run([_which("ffmpeg"), "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=6", "-ar", "16000", "-ac", "1", _wav],
+                   capture_output=True)
+    buf, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(err):
+        rc = lookup.clip_main([cdir, "00:02", "-o", os.path.join(work, "cut.wav")])
+    cut = os.path.join(work, "cut.wav")
+    check("clip 成功路径退出 0", rc == 0, (rc, err.getvalue()[-200:]))
+    check("clip 真的剪出文件", os.path.exists(cut) and os.path.getsize(cut) > 1000,
+          os.path.getsize(cut) if os.path.exists(cut) else "missing")
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

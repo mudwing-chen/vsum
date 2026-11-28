@@ -7,8 +7,9 @@
 校验：CPU 上不会被 GPU 判出的 float16 带崩。
 """
 import os
-import shutil
 import subprocess
+
+from .toolpath import which
 
 # 显存(GB) 下限 -> 建议模型上限；仅用于 doctor 提示，不强制
 MODEL_CAP = ((4, "small"), (8, "medium"), (1 << 30, "large-v3"))
@@ -70,7 +71,7 @@ def choose(gpus):
 
 def probe():
     """有 nvidia-smi 才探测；失败返回 []，不抛。"""
-    exe = shutil.which("nvidia-smi")
+    exe = which("nvidia-smi")
     if not exe:
         return []
     try:

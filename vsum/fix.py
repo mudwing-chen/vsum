@@ -13,7 +13,7 @@ import os
 import re
 import sys
 
-from . import termrules
+from . import atomic, termrules
 
 TS = re.compile(r"^\s*\[\s*([0-9.]+)\s*->\s*([0-9.]+)\s*\]")
 
@@ -154,14 +154,11 @@ def process(path, rules, apply, apply_medium, ocr_surfaces=None):
     if not apply:
         return result
     if any(r["applied"] for r in records):
-        with open(fixed_txt, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(new_lines) + ("\n" if raw.endswith("\n") else ""))
+        atomic.write_text(fixed_txt, "\n".join(new_lines) + ("\n" if raw.endswith("\n") else ""))
         result["fixed"] = fixed_txt
         if segments:
-            with open(fixed_seg, "w", encoding="utf-8") as fh:
-                json.dump({"segments": fix_segments(segments, rules, apply_medium)}, fh,
-                          ensure_ascii=False, indent=1)
-                fh.write("\n")
+            atomic.write_json(fixed_seg,
+                              {"segments": fix_segments(segments, rules, apply_medium)})
             result["fixed_segments"] = fixed_seg
     else:
         # 上一轮的 fixed 是旧词表的产物：这轮零命中就必须删掉，否则导出/评测读到过期稿
@@ -249,11 +246,9 @@ def main(argv=None):
         else:
             print("没有需要改的，不写 corrections.json。")
         return 0
-    with open(out, "w", encoding="utf-8") as fh:
-        json.dump({"terms": args.terms or termrules.DEFAULT_TERMS, "total": total,
-                   "high": high, "medium": total - high, "applied": applied, "files": files},
-                  fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
+    atomic.write_json(out, {"terms": args.terms or termrules.DEFAULT_TERMS, "total": total,
+                            "high": high, "medium": total - high, "applied": applied,
+                            "files": files})
     if applied:
         print("已写入 %d 个 transcript.fixed.txt（%d 处）与 %s"
               % (len([f for f in files if "fixed" in f]), applied, out))

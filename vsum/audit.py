@@ -5,13 +5,13 @@
 """
 import argparse
 import collections
-import sys
 import hashlib
 import json
 import os
 import re
+import sys
 
-from . import termrules
+from . import atomic, termrules
 
 LINE = re.compile(r"^\[\s*([0-9.]+)\s*->\s*([0-9.]+)\]\s*(.*)$")
 TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{2,}")
@@ -60,6 +60,10 @@ def scan_file(path):
 
 def run(root, out_path="term-audit.md", json_path="term-audit.json", top=30, terms=None):
     rules = termrules.load(terms)
+    terms_path = terms or termrules.DEFAULT_TERMS
+    with open(terms_path, "rb") as fh:
+        terms_blob = fh.read()
+    terms_sha = hashlib.sha256(terms_blob).hexdigest()
 
     videos = []
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -119,8 +123,7 @@ def run(root, out_path="term-audit.md", json_path="term-audit.json", top=30, ter
 
     report = ["# 术语体检报告\n"]
     report.append("- 词表 %s sha256 %s" % (
-        os.path.basename(terms or termrules.DEFAULT_TERMS),
-        hashlib.sha256(open(terms or termrules.DEFAULT_TERMS, "rb").read()).hexdigest()[:12]))
+        os.path.basename(terms_path), terms_sha[:12]))
     report.append("- 语料：%d 条 transcript，%d 行字幕" % (n_videos, n_lines))
     report.append("- 疑似命中：%d 处（已知错写）+ %d 处（版本号写法）" % (len(hits), len(shape)))
     report.append("- 涉及视频：%d 条（占 %.0f%%）" % (len(touched), 100.0 * len(touched) / max(1, n_videos)))
@@ -152,17 +155,14 @@ def run(root, out_path="term-audit.md", json_path="term-audit.json", top=30, ter
     for s in shape[:top]:
         report.append("- %.1fs %s：%s → 建议 %s" % (s["sec"] or 0, s["video"][:14], s["found"], s["suggest"]))
 
-    with open(out_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(report))
-
-    with open(json_path, "w", encoding="utf-8") as fh:
-        json.dump({
-            "terms": os.path.abspath(terms or termrules.DEFAULT_TERMS),
-            "terms_sha256": hashlib.sha256(open(terms or termrules.DEFAULT_TERMS, "rb").read()).hexdigest(),
-            "videos": n_videos, "lines": n_lines, "hits": hits,
-            "variants": [{"total": t, "norm": k, "forms": dict(c), "videos": nv} for t, k, c, nv in variants],
-            "shape": shape,
-        }, fh, ensure_ascii=False, indent=1)
+    atomic.write_text(out_path, "\n".join(report))
+    atomic.write_json(json_path, {
+        "terms": os.path.abspath(terms_path),
+        "terms_sha256": terms_sha,
+        "videos": n_videos, "lines": n_lines, "hits": hits,
+        "variants": [{"total": t, "norm": k, "forms": dict(c), "videos": nv} for t, k, c, nv in variants],
+        "shape": shape,
+    })
 
     print("videos=%d lines=%d hits=%d variants=%d shape=%d touched=%d" % (
         n_videos, n_lines, len(hits), len(variants), len(shape), len(touched)))

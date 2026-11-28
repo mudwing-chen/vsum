@@ -1,6 +1,7 @@
 # vsum
 
-Turn a video into a timestamped transcript. Runs locally, nothing uploaded. The output is a
+Turn a video into a timestamped transcript. Runs locally; nothing is uploaded unless you use
+`--summary llm`, which sends the transcript to the endpoint you name. The output is a
 directory: transcript, srt/vtt subtitles, summary, and a manifest with the input sha256 and every
 decode setting.
 
@@ -63,9 +64,11 @@ spelling in advance.**
 
 ## What the output looks like
 
-Real output from a 4-minute Chinese AI-news video is in [`docs/example/`](docs/example/).
-The text is Chinese; the format is the point. All three files there (`transcript.md`,
-`summary.md`, `segments.json`) are complete.
+A 4-minute Chinese AI-news video is in [`docs/example/`](docs/example/). The text is Chinese;
+the format is the point. All three files there (`transcript.md`, `summary.md`,
+`segments.json`) are complete. Note this is a **fixture, not a raw run**: the wording comes from
+a real transcript, but `avg_logprob` was regularised to build the demo (only 8 distinct values),
+so read it for the format, not as a confidence distribution.
 
 `transcript.md`:
 
@@ -102,7 +105,8 @@ vsum doctor      # checks python / ffmpeg / model / GPU / browser / yt-dlp / OCR
 
 The first run downloads a model (`small`, ~480 MB by default).
 `warn` rows in `doctor` are advice (model not cached, low disk) and do not affect the exit code;
-only `MISSING` rows mean a required dependency is missing (`extra` marks optional ones).
+only `MISSING` rows mean a required dependency is missing (`warn` is advice — model not cached,
+low disk; `extra` marks optional ones).
 Behind a restricted network, point HuggingFace at a mirror:
 
 ```bash
@@ -213,11 +217,18 @@ vsum talk.mp4 -o out/ --summary llm \
 ```
 
 Any OpenAI-compatible endpoint works: Ollama, llama.cpp, LM Studio, or a cloud API. Cloud
-endpoints need a key: pass `--llm-key`, or set `VSUM_LLM_KEY` / `OPENAI_API_KEY`. vsum sends it as
-`Authorization: Bearer <key>` and never writes it to logs, `manifest.json`, or `result.json`.
+endpoints need a key: pass `--llm-key`, or set `VSUM_LLM_KEY` / `OPENAI_API_KEY` (env wins over the
+flag: argv is visible in the process table). vsum sends it as `Authorization: Bearer <key>` and
+never writes it to logs, `manifest.json`, or `result.json`.
+
+The target is the origin of `--llm-url`: **https**, or http pointing at this machine
+(`127.0.0.1` / `localhost` / `::1`). Redirects are followed only when the origin is unchanged —
+a different host, scheme, or port is refused, so a gateway hop cannot hand your key to someone
+else's domain.
 Two levels: a
 one-sentence overview (model-written, explicitly labelled as *not* verbatim-verified) and bullets
-(must be a substring of a real segment, so they still pass the citation gate).
+(must be a substring of a real segment or merged short-segment block, so they still pass the
+citation gate).
 Long transcripts are chunked; a failed chunk doesn't kill the others, and every failure reason
 (HTTP status plus the server's own message) goes into `warnings`. If the endpoint is unreachable
 vsum falls back to extractive and tells you why.
@@ -230,9 +241,9 @@ vsum falls back to extractive and tells you why.
 | `transcript.txt` / `.srt` / `.vtt` / `.plain.txt` | timestamped / subtitles / plain text |
 | `summary.md` | overview / chapters / key numbers / keywords / doubtful segments, all with `[mm:ss]` |
 | `segments.json` | per-segment data: `start` `end` `text` `avg_logprob` `no_speech_prob` `compression_ratio` `temperature` |
-| `manifest.json` | input sha256, decode params, model, device, artifact list, warnings |
+| `manifest.json` | input sha256, decode params (incl. `config_sha256`, `hf_endpoint`), model, device, artifact list, warnings (`export` has the per-item detail); `input.path` / `audio.path` are file names, not absolute paths |
 | `export.source.json` | which segments file produced the export, its sha256, cue count |
-| `result.json` | machine-readable result: `ok` `counts` `reused` `summary` `sha256` `warnings` |
+| `result.json` | machine-readable result: `ok` `counts` `reused` `summary{mode,bullets,dropped,overview_verified}` `sha256` `warnings`; `out` is a directory name. Written **last** — a failed run leaves no stale `ok: true` behind |
 
 ## Two defaults
 
@@ -260,7 +271,9 @@ vsum falls back to extractive and tells you why.
 | Windows 11 | verified end-to-end: P106 GPU, Douyin short-link → detail API → download → transcribe, OCR, find, clip |
 
 Link fetching: Douyin (China) goes through the browser's own page API; Bilibili / YouTube use
-yt-dlp (`pip install 'vsum[yt]'`). Douyin requires a one-time `vsum login douyin` QR scan
+yt-dlp (`pip install 'vsum[yt] @ git+https://github.com/mudwing-chen/vsum'`; the `vsum` on PyPI
+is a different project, so always qualify the extra with the git URL). Douyin requires a one-time
+`vsum login douyin` QR scan
 in some regions.
 
 ## Known limitations
@@ -293,6 +306,7 @@ in some regions.
 | `VSUM_BROWSER_PROFILE` | browser profile used for link fetching | `~/.cache/vsum/chrome` |
 | `VSUM_BROWSER_ARGS` | extra browser flags, comma separated (`--no-sandbox,--disable-gpu` rescues `tab crashed`) | empty |
 | `SE_CACHE_PATH` | selenium driver cache when the default dir is unwritable | `~/.cache/selenium` |
+| `VSUM_IO_ENCODING` | encoding used when stdout is a pipe or a file; set it (e.g. `gbk`) if your parent process decodes with the locale codec | `utf-8` |
 
 ## Exit codes
 
@@ -301,8 +315,8 @@ in some regions.
 | 0 | success |
 | 1 | `vsum find` found nothing (for scripts; not an error) |
 | 2 | usage or input error (missing file, bad flag, broken JSON, bad `clip` time or time outside every segment) |
-| 3 | missing dependency (faster-whisper / selenium / ffmpeg) |
-| 4 | transcription, fetch or clip failed (including model load, missing source media) |
+| 3 | missing dependency, or one that cannot start (faster-whisper / selenium / ffmpeg, CUDA DLLs, model load) |
+| 4 | transcription, fetch or clip failed (VAD dropped everything, still OOM after downgrading, download failed, no source media) |
 | 5 | evaluation below threshold (`eval --min-cer` / `holdout --max-cer`), or `batch` had a failed item |
 | 130 | interrupted (Ctrl-C) |
 

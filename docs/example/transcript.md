@@ -1,11 +1,11 @@
 ---
 schema: 1
 title: "video"
-source: "C:\\Users\\chenh\\Documents\\deepseek-harness\\default-workspace\\video\\douyin-gpt62\\video.mp4"
+source: "video.mp4"
 duration_sec: 241.1
 segments: 143
 chars: 1676
-model: C:\Users\chenh\Documents\deepseek-harness\default-workspace\_models\faster-whisper-small
+model: small
 language: zh
 terms_pack: null
 low_conf_segments: 13

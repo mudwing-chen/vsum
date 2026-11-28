@@ -13,8 +13,9 @@ Safari 的一次性准备（显式 --browser safari 才需要）：
 import os
 import platform
 import re
-import shutil
 import time
+
+from .toolpath import which
 
 def default_profile(env=None, system=None):
     """平台默认 profile：Windows 用 %LOCALAPPDATA%\\vsum\\chrome，其它用 ~/.cache/vsum/chrome。"""
@@ -39,7 +40,8 @@ def _selenium():
         from selenium import webdriver  # noqa: F401
     except ImportError as exc:  # pragma: no cover - 取决于环境
         raise BrowserError(
-            "没有 selenium：pip install 'vsum[browser]'（或 pip install selenium）"
+            "没有 selenium：pip install 'vsum[browser] @ git+https://github.com/mudwing-chen/vsum'"
+            "（或 pip install selenium）。注意 PyPI 上的 vsum 不是这个项目，别裸装 vsum[browser]。"
         ) from exc
     from selenium import webdriver
     return webdriver
@@ -57,6 +59,24 @@ def profile_dir(override=None):
     """独立 profile 目录：--profile > VSUM_BROWSER_PROFILE > 平台默认（见 default_profile）。"""
     raw = override or os.environ.get("VSUM_BROWSER_PROFILE") or default_profile()
     return os.path.abspath(os.path.expanduser(raw))
+
+
+def ensure_profile_dir(override=None):
+    """建好 profile 目录并把权限收到 0700。
+
+    这个目录里放的是登录后的 cookie（sessionid 等价于账号），默认位置在家目录下，
+    别的本机账户不该能读。已存在的目录也 chmod 一次：老版本建的是默认 umask 权限。
+    """
+    path = profile_dir(override)
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    except OSError:
+        return path
+    try:
+        os.chmod(path, 0o700)
+    except OSError:      # Windows 上 chmod 只管只读位，忽略
+        pass
+    return path
 
 
 def windows_candidates(env=None):
@@ -102,7 +122,7 @@ def find_binary(kind, system=None, env=None):
     names = (("chrome", "google-chrome", "chromium") if kind == "chrome"
              else ("msedge", "microsoft-edge"))
     for name in names:
-        found = shutil.which(name)
+        found = which(name)
         if found:
             return found
     return None
@@ -126,7 +146,7 @@ def _options(target, headless, profile):
     else:
         from selenium.webdriver.chrome.options import Options
     opts = Options()
-    opts.add_argument("--user-data-dir=" + profile_dir(profile))
+    opts.add_argument("--user-data-dir=" + ensure_profile_dir(profile))
     opts.add_argument("--profile-directory=Default")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--mute-audio")
@@ -215,6 +235,8 @@ def login_douyin(profile=None, timeout=300, prefer="chrome"):
             names = {c.get("name") for c in driver.get_cookies()}
             if "sessionid" in names or "sessionid_ss" in names:
                 logged_in = True
+                print("登录态已存进 %s —— 这个目录等同于账号凭据，别共享/提交它"
+                      % max(profile_dir(profile), ensure_profile_dir(profile)), flush=True)
                 return driver, kind
             time.sleep(3)
         raise BrowserError("扫码超时（%d 秒）。窗口里扫码登录后重跑：vsum login douyin" % timeout)

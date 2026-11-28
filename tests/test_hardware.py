@@ -3,7 +3,10 @@
 import contextlib
 import io
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -98,6 +101,40 @@ eq((c["device"], c["compute_type"]), ("cuda", "float16"), "cuda 保留 float16")
 os.environ.pop("WHISPER_COMPUTE", None)
 os.environ.pop("WHISPER_DEVICE", None)
 
+# M-8：PATH 里的 "." 不能把当前目录下的同名 exe 顶上来（Windows 上 shutil.which 会）
+from vsum.toolpath import which  # noqa: E402
+
+probe_name = "vsum-exe-probe.exe" if os.name == "nt" else "vsum-exe-probe"
+probe_dir = tempfile.mkdtemp(prefix="vsum-path-")
+probe_exe = os.path.join(probe_dir, probe_name)
+with open(probe_exe, "w", encoding="utf-8") as fh:
+    fh.write("#!/bin/sh\nexit 0\n")
+os.chmod(probe_exe, 0o755)
+
+old_path = os.environ.get("PATH")
+old_cwd = os.getcwd()
+try:
+    os.chdir(probe_dir)
+    # 对照：只给 "." 时 shutil.which 真的会找到当前目录那一份
+    os.environ["PATH"] = "."
+    eq(shutil.which(probe_name) is not None, True, "对照组：shutil.which 认 '.'")
+    eq(which(probe_name), None, "toolpath.which 剔除 '.'")
+    # 前置 "." + 绝对目录：相对项被丢掉，命中的必须是目录里的绝对路径
+    os.environ["PATH"] = "." + os.pathsep + probe_dir
+    got = which(probe_name)
+    eq(got, probe_exe, "绝对目录仍然可用")
+    eq(os.path.isabs(got or ""), True, "不返回相对路径")
+    # 带分隔符的参数按路径处理，不做 PATH 搜索
+    eq(which(os.path.join(probe_dir, "nope")), None, "路径参数找不到就是 None")
+    eq(which(probe_exe), probe_exe, "路径参数存在就返回绝对路径")
+finally:
+    os.chdir(old_cwd)
+    if old_path is None:
+        os.environ.pop("PATH", None)
+    else:
+        os.environ["PATH"] = old_path
+    shutil.rmtree(probe_dir, ignore_errors=True)
+
 from vsum import bench  # noqa: E402
 from vsum.pipeline import InputError  # noqa: E402
 
@@ -113,6 +150,66 @@ try:
     FAILS.append("bench without audio should raise")
 except InputError:
     pass
+
+# L-1：--synth 的临时文件名不可预测（CWE-377），也不再共用固定名字
+said = []
+
+
+def fake_say(argv, **kwargs):
+    said.append(argv)
+    with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as fh:
+        fh.write("FAKE")
+    return subprocess.CompletedProcess(argv, 0)
+
+orig_run, orig_which, orig_platform = bench.subprocess.run, bench.which, sys.platform
+try:
+    bench.subprocess.run = fake_say
+    bench.which = lambda cmd: "/usr/bin/say"
+    sys.platform = "darwin"
+    p1 = bench.synth_audio()
+    p2 = bench.synth_audio()
+finally:
+    bench.subprocess.run, bench.which = orig_run, orig_which
+    sys.platform = orig_platform
+eq(os.path.exists(p1), True, "synth 产出文件")
+eq(p1 != p2, True, "两次合成名字不同（不可预测）")
+eq(os.path.basename(p1).startswith("vsum-bench-"), True, "mkstemp 临时名前缀")
+for p in (p1, p2):
+    if os.path.exists(p):
+        os.remove(p)
+
+# I-14：doctor 推荐的 `vsum bench --model auto` 必须先把 auto 解析成具体型号
+seen = {}
+
+
+def fake_to_wav(src, workdir):
+    os.makedirs(workdir, exist_ok=True)
+    return os.path.join(workdir, "bench-16k.wav")
+
+
+def fake_run_one(audio, model_name, device, compute, language="zh"):
+    seen["model"] = model_name
+    return {"compute_type": compute, "ok": False, "error": "fake"}
+
+
+audio_dir = tempfile.mkdtemp(prefix="vsum-bench-audio-")
+audio_path = os.path.join(audio_dir, "clip.wav")
+with open(audio_path, "wb") as fh:
+    fh.write(b"RIFF")
+orig_to_wav, orig_run_one = bench.to_wav, bench.run_one
+try:
+    bench.to_wav, bench.run_one = fake_to_wav, fake_run_one
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        res = bench.run(audio=audio_path, model_name="auto", computes="int8")
+finally:
+    bench.to_wav, bench.run_one = orig_to_wav, orig_run_one
+    shutil.rmtree(audio_dir, ignore_errors=True)
+out = buf.getvalue()
+eq(seen.get("model") != "auto", True, "auto 不直接交给 WhisperModel")
+eq(res["model"], seen.get("model"), "结果里的 model 是解析后的")
+eq(res["model_requested"], "auto", "保留了用户请求")
+eq("auto → " in out, True, "输出里印出 auto → 型号：%r" % out[:80])
 
 from vsum import doctor  # noqa: E402
 

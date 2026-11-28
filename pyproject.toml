@@ -32,7 +32,14 @@ classifiers = [
 # 不锁 av：vsum 自己用 ffmpeg 抽 16k wav、用标准库 wave 读成数组喂给模型，
 # 从不走 faster-whisper 的 decode_audio，所以 av 的版本变化影响不到转写。
 # 老版本这里钉的是 av>=11,<14，害得用户装 vsum 时被降级 av 甚至弄坏别的项目。
-dependencies = ["faster-whisper>=1.0"]
+#
+# numpy 是直接 import 的（transcribe 用它接 ndarray），所以显式声明；av 只在
+# probe_duration 里作可选回退（`import av` 包在 try 里），靠 faster-whisper 带进来即可。
+# 两者都不写上限：vsum 不做版本锁，但也因此不保证未来大版本仍然兼容。
+dependencies = [
+  "faster-whisper>=1.0",
+  "numpy>=1.20",
+]
 
 [project.optional-dependencies]
 # 抓链接：selenium 驱动 Safari(macOS) / Chrome(其他平台)

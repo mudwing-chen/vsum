@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from . import hardware
+from .toolpath import which
 
 SYNTH_TEXT = "这是一段用来测试转写速度的中文样例。我们关心的是每秒音频要花多少秒转写。"
 
@@ -22,19 +23,28 @@ class BenchError(RuntimeError):
 
 
 def synth_audio(seconds=30, text=None, out_path=None):
-    """macOS 用 say 合成；返回 (路径, 是否临时)。其它平台直接抛 InputError。"""
-    if sys.platform != "darwin" or not shutil.which("say"):
+    """macOS 用 say 合成；返回音频路径。其它平台直接抛 InputError。"""
+    if sys.platform != "darwin" or not which("say"):
         from .pipeline import InputError
 
         raise InputError("--synth 只在 macOS 上可用；其它平台请用 --audio 指定音频")
     text = text or SYNTH_TEXT
-    path = out_path or os.path.join(os.environ.get("TMPDIR") or tempfile.gettempdir(),
-                                     "vsum-bench.aiff")
     rate = 180  # 中文默认语速；秒数只用来提示，不强行凑
+    tmp = None
+    if out_path:
+        path = out_path
+    else:
+        # 固定文件名可被同机其它进程抢先占位（CWE-377）：mkstemp 自己取名，
+        # 句柄关掉后 say 直接覆盖这个空文件。
+        fd, path = tempfile.mkstemp(prefix="vsum-bench-", suffix=".aiff")
+        os.close(fd)
+        tmp = path
     try:
         subprocess.run(["say", "-r", str(rate), "-o", path, text], check=True,
                        capture_output=True, timeout=120)
     except subprocess.CalledProcessError as exc:
+        if tmp and os.path.exists(tmp):
+            os.remove(tmp)
         raise BenchError("say 合成失败：%s" % (exc.stderr or exc))
     return path
 
@@ -59,7 +69,7 @@ def to_wav(src, workdir):
     ``open() got an unexpected keyword argument`` 直接炸。vsum 主路径本来就
     绕开 av（见 transcribe.load_audio），bench 必须走同一条路。
     """
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = which("ffmpeg")
     if not ffmpeg:
         raise BenchError("找不到 ffmpeg，没法把音频转成 16k 单声道 wav")
     wav = os.path.join(workdir, "bench-16k.wav")
@@ -111,8 +121,17 @@ def run(audio=None, synth=False, model_name="tiny", out_dir=None, computes=None,
     if audio and not os.path.exists(audio):
         raise FileNotFoundError(audio)
     hw = hardware.resolve()
+    requested = model_name
+    if (model_name or "").strip().lower() == "auto":
+        # doctor 会建议 `vsum bench --model auto`，但 WhisperModel 不认识 "auto"：
+        # 先按设备解析成具体型号，否则照做必然加载失败。
+        from .transcribe import resolve_model
+
+        model_name = resolve_model(model_name)
+        print("auto → %s（%s / %s）" % (model_name, hw["device"], hw["compute_type"]))
+    made_audio = None
     if synth:
-        audio = synth_audio()
+        audio = made_audio = synth_audio()
     made_tmp = out_dir is None
     workdir = out_dir or tempfile.mkdtemp(prefix="vsum-bench-")
     os.makedirs(workdir, exist_ok=True)
@@ -124,7 +143,11 @@ def run(audio=None, synth=False, model_name="tiny", out_dir=None, computes=None,
     finally:
         if made_tmp:
             shutil.rmtree(workdir, ignore_errors=True)
-    result = {"schema": 1, "model": model_name, "device": hw["device"],
+            # 合成音频跟着 workdir 一起清；给了 -o 就留着，bench.json 里的路径还能用
+            if made_audio and os.path.exists(made_audio):
+                os.remove(made_audio)
+    result = {"schema": 1, "model": model_name, "model_requested": requested,
+              "device": hw["device"],
               "gpu": hw["name"], "compute_choice": hw["compute_type"],
               "reason": hw["reason"], "audio": audio, "runs": rows}
     if out_dir:

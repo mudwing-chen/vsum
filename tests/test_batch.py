@@ -142,9 +142,6 @@ proc = subprocess.run([sys.executable, "-m", "vsum", "batch", os.path.join(work,
                       text=True, encoding="utf-8", errors="replace")
 check("清单不存在退出 2", proc.returncode == 2 and "error:" in proc.stderr, proc.returncode)
 
-if FAIL:
-    print("FAIL\n" + "\n".join(FAIL))
-    sys.exit(1)
 # --devices：裸数字按 CUDA 序号理解（nvidia-smi 的写法），不合法就早报错
 check("devices 裸数字", batch._device_list("0,1") == ["cuda:0", "cuda:1"], batch._device_list("0,1"))
 check("devices 保留显式写法", batch._device_list("cuda:0, cpu") == ["cuda:0", "cpu"])
@@ -154,4 +151,8 @@ try:
 except ValueError:
     check("devices 非法要报错", True)
 
+if FAIL:
+    # 放在文件末尾：早退会让后面的断言永远不执行（曾经 --devices 那三条就是死断言）
+    print("FAIL\n" + "\n".join(FAIL))
+    sys.exit(1)
 print("OK batch")

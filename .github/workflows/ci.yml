@@ -4,10 +4,15 @@ on:
   push:
   pull_request:
 
+# 测试只需要读代码：默认令牌权限按最小化给，别让 PR 里的脚本顺手改仓库
+permissions:
+  contents: read
+
 jobs:
   test:
     # ubuntu-latest 已到 26.04，setup-python 没有 3.9；3.9 钉在 22.04
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +37,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

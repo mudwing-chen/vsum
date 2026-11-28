@@ -8,9 +8,20 @@ import hashlib
 import json
 import os
 
-from . import __version__
+from . import __version__, atomic
 
 SCHEMA = 1
+
+
+def _display(path, out_dir):
+    """产物目录内的路径记文件名；目录外的保留原样（那是用户的输入，定位需要它）。"""
+    try:
+        if os.path.commonpath([os.path.abspath(path), os.path.abspath(out_dir)]) == \
+                os.path.abspath(out_dir):
+            return os.path.basename(path)
+    except (ValueError, OSError):
+        pass
+    return path
 
 
 def sha256_file(path, chunk=1 << 20):
@@ -32,9 +43,11 @@ def build(input_path, audio_path, decode, segments, outputs, warnings,
         "schema": SCHEMA,
         "vsum_version": version or __version__,
         "mode": mode,
-        "input": {"path": input_path, "sha256": sha256_file(input_path),
+        # 路径不写绝对路径：manifest 是要发给别人复现的，别顺手把本机用户名带出去
+        "input": {"path": _display(input_path, audio_path), "sha256": sha256_file(input_path),
                   "duration": duration, "url": source_url},
-        "audio": {"path": audio_path, "sha256": sha256_file(audio_path), "sample_rate": 16000},
+        "audio": {"path": _display(audio_path, audio_path), "sha256": sha256_file(audio_path),
+                  "sample_rate": 16000},
         "decode": decode,
         "terms": terms,
         "counts": {"segments": len(segments), "chars": sum(len(s["text"]) for s in segments)},
@@ -48,10 +61,8 @@ def build(input_path, audio_path, decode, segments, outputs, warnings,
 
 
 def write(man, path):
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(man, fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
-    return path
+    # 产物要能被别的进程安全读到：先写临时文件再原子替换
+    return atomic.write_json(path, man)
 
 
 def read(path):

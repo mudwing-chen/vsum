@@ -105,9 +105,11 @@ check("两者都是 RuntimeError 子类（老代码还能捕到）",
       issubclass(ocr.DependencyError, RuntimeError) and issubclass(ocr.InputError, RuntimeError))
 
 # 没装 ffmpeg：DependencyError，不是 RuntimeError
-_shutil = ocr.shutil
+# 二进制查找走 vsum.toolpath：Windows 上 shutil.which 会把当前目录前置，
+# 别人给的目录里放个 ffmpeg.EXE 就能抢先执行
+_which = ocr.which
 try:
-    ocr.shutil = types.SimpleNamespace(which=lambda name: None)
+    ocr.which = lambda name: None
     try:
         ocr.extract_frames("/nope/video.mp4", [0.0], _mkdtemp())
         check("没 ffmpeg 要抛 DependencyError", False)
@@ -116,7 +118,7 @@ try:
     except RuntimeError as exc:
         check("没 ffmpeg 要抛 DependencyError", False, "抛的是 %s：%s" % (type(exc).__name__, exc))
 finally:
-    ocr.shutil = _shutil
+    ocr.which = _which
 
 # 没装 OCR 引擎：DependencyError，提示里带安装命令（import 拦掉，不依赖真环境）
 _real_import = builtins.__import__
@@ -174,6 +176,31 @@ try:
 finally:
     ocr._engine = _engine
     ocr.extract_frames = _frames
+
+# run() 成功路径：抽帧和识别都用假的，验的是「写盘 + 对照表」这一段
+_d2 = _mkdtemp()
+with open(os.path.join(_d2, "segments.json"), "w", encoding="utf-8") as fh:
+    json.dump({"segments": [
+        {"start": 0.0, "end": 3.0, "text": "今天我们聊聊 cloud code 这个工具", "avg_logprob": -0.9},
+        {"start": 30.0, "end": 33.0, "text": "它叫 Grok", "avg_logprob": -0.2},
+    ]}, fh, ensure_ascii=False)
+with open(os.path.join(_d2, "video.mp4"), "wb") as fh:
+    fh.write(b"x")
+_eng, _fr = ocr._engine, ocr.extract_frames
+ocr._engine = lambda: (lambda frame: ("Cloud Code", 0.9), "fake-engine")
+ocr.extract_frames = lambda video, times, out, quality=3: [
+    (t, os.path.join(out, "f%03d.jpg" % i)) for i, t in enumerate(times)]
+try:
+    with redirect_stdout(io.StringIO()):
+        _doc = ocr.run(_d2)
+    check("run 成功路径写出 ocr.json", os.path.exists(os.path.join(_d2, "ocr.json")))
+    check("run 成功路径写出 ocr.md", os.path.exists(os.path.join(_d2, "ocr.md")))
+    check("run 记录对照数", len(_doc["ocr_pairs"]) == _doc["frames"] and _doc["frames"] > 0,
+          (_doc["frames"], len(_doc["ocr_pairs"])))
+    _md = open(os.path.join(_d2, "ocr.md"), encoding="utf-8").read()
+    check("ocr.md 里有画面文本", "Cloud Code" in _md, _md[:200])
+finally:
+    ocr._engine, ocr.extract_frames = _eng, _fr
 
 # OCR 候选接回 fix：两帧都看到 + 读音像，才算 high（可自动改）；只一帧的仍是 medium
 import json as _json  # noqa: E402

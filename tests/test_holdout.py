@@ -136,6 +136,20 @@ ok_rc = holdout.run(os.path.join(tmp, "okc"), out=out + ".o", quiet=True)
 ok_item = load(out + ".o")["items"][0]
 check("有真参考时正常评", ok_rc == 0 and ok_item["ref"] == "ref.txt", ok_item)
 
+# 不给 -o 时写当前目录，绝不往用户语料目录里塞文件（语料是输入，要能原样发给别人）
+cwd_test = os.path.join(tmp, "cwdtest")
+os.makedirs(cwd_test)
+before = sorted(os.listdir(CORPUS))
+here = os.getcwd()
+os.chdir(cwd_test)
+try:
+    default_rc = holdout.run(CORPUS, quiet=True)
+finally:
+    os.chdir(here)
+check("默认输出退出 0", default_rc == 0, default_rc)
+check("默认写到当前目录", os.path.isfile(os.path.join(cwd_test, "holdout.json")), cwd_test)
+check("语料目录没多出文件", sorted(os.listdir(CORPUS)) == before, os.listdir(CORPUS))
+
 if FAIL:
     for f in FAIL:
         print("FAIL " + f)

@@ -56,7 +56,9 @@ check("summary 计数", res["summary"]["mode"] == "extractive" and res["summary"
 check("sha256 对得上", all(
     res["sha256"][n] == manifest_mod.sha256_file(os.path.join(out, n))
     for n in res["sha256"]), res["sha256"])
-check("artifacts 不写绝对路径", all("/" not in v for v in res["artifacts"].values() if v), res["artifacts"])
+check("artifacts 不写绝对路径",
+      all(not os.path.isabs(v) and "/" not in v and "\\" not in v
+          for v in res["artifacts"].values() if v), res["artifacts"])
 
 md = open(os.path.join(out, "transcript.md"), encoding="utf-8").read()
 check("YAML 里低置信为 1", "low_conf_segments: 1" in md, md.splitlines()[:10])
@@ -140,9 +142,11 @@ check("manifest 留了导出明细", isinstance(man.get("export"), dict) and "in
       man.get("export"))
 
 # eval 直接读 pipeline 产出的 manifest：曾经因为 warnings 从 dict 变成 list 在这里抛 AttributeError
+# 子进程管道是 UTF-8（VSUM_IO_ENCODING 可改），这里显式声明，别依赖本机代码页
 proc = subprocess.run([sys.executable, "-m", "vsum", "eval", "--manifest",
                        os.path.join(out, "manifest.json")],
-                      capture_output=True, text=True, cwd=ROOT)
+                      capture_output=True, text=True, cwd=ROOT,
+                      encoding="utf-8", errors="replace")
 check("eval 读得了新 manifest", proc.returncode == 0, (proc.returncode, (proc.stderr or "")[-300:]))
 check("eval 报出 long/invalid cue 数", "long cues           : 1" in proc.stdout, proc.stdout[-300:])
 
@@ -155,6 +159,33 @@ manifest_mod.write(man, os.path.join(out, "manifest.json"))
 _ok, _segs, _why = pipeline.segments_reusable(out, inp, "tiny", language="zh", context=True,
                                               decode_opts={"batch_size": 4})
 check("批推理可以复用", _ok is True, _why)
+
+# 中途失败不能留下上一轮的 result.json：batch 靠「存在且 ok」跳过目录，
+# 半新半旧的目录被当成成功比直接失败更糟
+_q = os.path.join(work, "stale")
+os.makedirs(_q, exist_ok=True)
+# 让这次走复用路径，直接冲到导出阶段，测的才是「导出失败」而不是「抽音频失败」
+for _n in ("manifest.json", "segments.json", "audio.wav"):
+    shutil.copyfile(os.path.join(out, _n), os.path.join(_q, _n))
+_old_result = os.path.join(_q, "result.json")
+open(_old_result, "w", encoding="utf-8").write('{"ok": true, "note": "上一轮"}\n')
+_orig_export = pipeline.export.export_all
+
+
+def _boom(*a, **k):
+    raise RuntimeError("模拟导出阶段失败")
+
+
+pipeline.export.export_all = _boom
+try:
+    try:
+        pipeline.run(inp, _q, model="tiny")
+        check("导出失败会抛错", False)
+    except RuntimeError:
+        check("导出失败会抛错", True)
+finally:
+    pipeline.export.export_all = _orig_export
+check("失败后不留旧 result.json", not os.path.exists(_old_result))
 
 if FAIL:
     print("FAIL\n" + "\n".join(FAIL))

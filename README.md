@@ -1,6 +1,6 @@
 # vsum
 
-把视频转成带时间戳的逐字稿，跑在本机，不上传。产物是一个目录：逐字稿、srt/vtt 字幕、摘要，
+把视频转成带时间戳的逐字稿，跑在本机，默认不上传（只有 `--summary llm` 会把逐字稿发给你指定的模型端点）。产物是一个目录：逐字稿、srt/vtt 字幕、摘要，
 以及一份记着输入 sha256 和解码参数的 manifest。
 
 [English](README.en.md) · 中文
@@ -8,6 +8,7 @@
 ```bash
 # 需要 Python 3.9+ 和 ffmpeg
 uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"
+# 上面装的是 main 的最新提交（不钉版本）；要可复现就 clone 后 git checkout <commit> 再 pip install -e .
 # 或者：pipx install "git+https://github.com/mudwing-chen/vsum"
 
 vsum talk.mp4 -o out/     # 转写 + 导出 + 抽取式摘要
@@ -62,7 +63,9 @@ $ vsum fix out/ --from-ocr out/ocr.json --apply
 ## 看一眼真实产物
 
 示例在 [`docs/example/`](docs/example/)：一条 4 分 01 秒的中文视频，`transcript.md`、`summary.md`、
-`segments.json` 都是完整输出。
+`segments.json` 都是完整版。**注意它是 fixture 而不是某次真实运行的原始输出**：
+文案来自真实转写，`avg_logprob` 为了构造演示场景做过规则化（只有 8 个取值），
+所以用它看格式，别用它推断置信度分布。
 
 `transcript.md`：
 
@@ -116,7 +119,7 @@ export HF_ENDPOINT=https://hf-mirror.com     # Windows: set HF_ENDPOINT=...
 vsum talk.mp4 -o out/                       # 本地文件
 vsum "https://www.bilibili.com/video/BV..." -o out/link
 vsum batch urls.txt -o out/batch --jobs 2   # 每条一个子进程；失败记进 batch.json，不中断
-vsum find out/ "价格" --context 1            # 搜索，带上下文
+vsum find out/ "美元" --context 1            # 搜索，带上下文（示例里 16 处命中）
 vsum clip out/ 01:14 -o clip.mp4            # 剪出那一段，前后各留 1.5 秒
 ```
 
@@ -192,11 +195,12 @@ medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要
 真实快慢用 `vsum bench --audio <你的音频>` 量，别信估算。
 
 > **Windows + NVIDIA 少一步？** ctranslate2 需要 CUDA 运行库。装了
-> `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` 的话，vsum 启动时会自动把
-> 包内 `bin/` 挂进 DLL 搜索路径，不用再手动改 PATH；真起不来会自动退回 CPU 并在
-> `manifest.json` 的 `decode.device_source` 记成 `fallback`，不会假装用了显卡。
+> `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` 的话，vsum 在**加载模型时**把
+> 包内 `bin/` 临时挂进 PATH 与 DLL 搜索路径，加载完就撤掉（子进程的 PATH 不会被污染）；
+> 真起不来会自动退回 CPU，`manifest.json` 的 `decode.device_source` 记成 `fallback`，
+> 不会假装用了显卡。
 >
-> **`vsum doctor` 报 `hf-cache` MISSING？** 模型缓存目录不可用——换盘/搬家之后
+> **`vsum doctor` 的 `hf-cache` 行不是 `ok`？** 模型缓存目录不可用——换盘/搬家之后
 > `~/.cache/huggingface` 指向已移除磁盘的软链是最常见的一种，症状是模型明明下过却
 > 加载不了，报错只有 `[WinError 5] 拒绝访问`。把缓存指到可写目录再试：
 > Windows `set HF_HOME=D:\hf`，macOS/Linux `export HF_HOME=~/hf`。
@@ -214,15 +218,16 @@ medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要
 | `transcript.txt` / `.srt` / `.vtt` / `.plain.txt` | 带时间戳 / 字幕 / 纯文本 |
 | `summary.md` | 概览 / 分章 / 关键数字 / 关键词 / 存疑段，每条带 `[mm:ss]` |
 | `segments.json` | 段级数据：`start` `end` `text` `avg_logprob` `no_speech_prob` `compression_ratio` `temperature` |
-| `manifest.json` | 输入 sha256、解码参数、模型、设备、产物清单、告警（`warnings` 是句子列表，逐条明细在 `export`） |
+| `manifest.json` | 输入 sha256、解码参数（含 `config_sha256`、`hf_endpoint`）、模型、设备、产物清单、告警（`warnings` 是句子列表，逐条明细在 `export`）；`input.path` / `audio.path` 在产物目录内时只记文件名（目录外的输入保留原样，定位要用） |
 | `export.source.json` | 导出所用的 segments 路径 + sha256 + cue 数（字幕自己证明不了出处） |
-| `result.json` | 机器可读结论：`ok` `counts` `reused` `summary{mode,bullets,dropped}` `sha256` `warnings` |
+| `result.json` | 机器可读结论：`ok` `counts` `reused` `summary{mode,bullets,dropped,overview_verified}` `sha256` `warnings`；`out` 只记目录名。**最后写入**，进程中途失败时目录里不会有它 |
 
 ## 摘要怎么保证有出处
 
 默认**抽取式**：候选句按「含数字 / 含拉丁词 / 含词表术语 / 含提示词 / 长度」打分，
-三个小节依次取还没用过的句子（全局去重），然后过一道硬门：要点必须是某段原文的子串、
-且时间戳与段起点相差 ≤1 秒，否则删掉并记进 `dropped`。
+三个小节依次取还没用过的句子（全局去重），然后过一道硬门：要点必须是**某段原文（或合并后的短段块）**
+的子串，且时间戳落在该块的起止范围内（前后各留 1 秒），否则删掉并记进 `dropped`。
+短句会先按 `merge_short()` 合并成块再校验，所以一条要点可以跨两三段原话。
 
 它保证每条要点都有出处，不保证摘得对。
 
@@ -239,8 +244,13 @@ LLM 模式分两级：
 - **要点**（必须是原文片段，照样过回查门）
 
 本地 Ollama / LM Studio 不用鉴权；OpenAI、DeepSeek 这类云服务要带 key：`--llm-key sk-...`，
-也可以只设环境变量 `VSUM_LLM_KEY` 或 `OPENAI_API_KEY`。vsum 只发
-`Authorization: Bearer <key>`，不把 key 写进日志、`manifest.json` 或 `result.json`。
+也可以只设环境变量 `VSUM_LLM_KEY` 或 `OPENAI_API_KEY`（环境变量优先于参数：参数会出现在
+同机其它用户的进程表里）。vsum 只发 `Authorization: Bearer <key>`，不把 key 写进日志、
+`manifest.json` 或 `result.json`。
+
+发送目标是 `--llm-url` 的 origin：只接受 **https**，或指向本机的 http（`127.0.0.1` /
+`localhost` / `::1`）。重定向只跟随**同源**跳转——换域名、换协议、换端口一律拒绝，
+否则一次网关跳转就能把 key 交给别人的域名。
 
 长视频会按字符预算分块请求，部分块失败不影响其他块，失败情况记进 `warnings`。
 LLM 不可用时自动退回抽取式，并把原因一起记进 `warnings`——包括 HTTP 状态码和服务端原话
@@ -260,7 +270,7 @@ LLM 不可用时自动退回抽取式，并把原因一起记进 `warnings`—�
 所以 vsum 的做法是把画面取回来对照：
 
 ```bash
-pip install 'vsum[ocr]'          # 可选：抽帧 OCR（rapidocr + onnxruntime）
+pip install 'vsum[ocr] @ git+https://github.com/mudwing-chen/vsum'   # 可选：抽帧 OCR（rapidocr + onnxruntime）
 vsum ocr out/                    # 抽最值得看的帧，OCR，和转写并排列出来
 vsum ocr out/ --every 30         # 也可以按间隔扫一遍，找标题卡/信息卡
 ```
@@ -313,7 +323,8 @@ vsum mine out/                   # 挖词表外的变体候选（需人工确认
 | Windows | P106 + Win11 实测：转写 / 导出 / find / clip 通过；抖音短链 → detail 接口 → 下载 → 转写 全链路通过（Edge 158） |
 
 链接抓取：抖音走 Chrome / Edge 的页面接口（先 `vsum login douyin` 扫码一次），
-B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
+B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt] @ git+https://github.com/mudwing-chen/vsum'`）。
+注意 PyPI 上的 `vsum` 是另一个项目：装 extras 要用 `包名[extra] @ git+…` 的写法，别裸装 `vsum[yt]`。
 
 ## 已知限制
 
@@ -326,6 +337,10 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 - **抽帧 OCR 只是候选**：它给的是「画面上写的是什么」，要不要改仍由人判断。
 - 中文繁简混排无法完全避免（取决于模型与上下文设置）。
 - 抖音风控阈值未知：连续失败别硬试，`batch` 串行无退避。
+- **`--model` 接受任意 HuggingFace 仓库名**（含镜像上的第三方微调）：这是有意的逃生口，
+  但 vsum 不校验权重摘要、也不记 revision。要可复现就先下到本地再用 `--model <目录>`。
+- **`batch --jobs` 的子进程继承环境变量**（除 `VSUM_LLM_KEY` / `OPENAI_API_KEY`）；
+  每条链的完整 stdout/stderr 落在 `<out>/.logs/`，失败时会把日志路径写进 `batch.json`。
 
 ## 环境变量
 
@@ -342,6 +357,7 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 | `VSUM_BROWSER_PROFILE` | 抓链接用的浏览器 profile | `~/.cache/vsum/chrome` |
 | `VSUM_BROWSER_ARGS` | 追加浏览器启动参数，逗号分隔；受限环境里 `--no-sandbox,--disable-gpu` 能救 `tab crashed` | 空 |
 | `SE_CACHE_PATH` | selenium 驱动缓存目录（默认目录不可写时改这里） | `~/.cache/selenium` |
+| `VSUM_IO_ENCODING` | 输出被重定向/接管道时的编码；父进程按 locale 解码会 `UnicodeDecodeError`，那时设成 `gbk` 等本机编码 | `utf-8` |
 
 ## 退出码
 
@@ -350,8 +366,8 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 | 0 | 成功 |
 | 1 | `vsum find` 没有命中（便于脚本判断，不算错误） |
 | 2 | 用法或输入错误（文件不存在、参数不对、JSON 坏了、`clip` 的时间格式不对或不在任何一段里） |
-| 3 | 缺依赖（没装 faster-whisper / selenium / ffmpeg） |
-| 4 | 转写、抓取或剪片失败（含模型加载失败、找不到原视频） |
+| 3 | 缺依赖或依赖起不来（没装 faster-whisper / selenium / ffmpeg、CUDA 库缺 DLL、模型加载失败） |
+| 4 | 转写、抓取或剪片失败（VAD 全滤掉、OOM 降档后仍失败、下载失败、找不到原视频） |
 | 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`），或 `batch` 有失败项 |
 | 130 | Ctrl-C 中断 |
 

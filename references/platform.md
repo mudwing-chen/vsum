@@ -49,6 +49,14 @@ vsum login douyin --profile /tmp/p --timeout 120
 
 `VSUM_BROWSER_ARGS` 用逗号或空格分隔，追加到浏览器启动参数；这类环境问题不该由 vsum 猜。
 
+两条要自己留意的边界：
+
+- **手工投放的 driver 无签名校验**：上面那条「下 `msedgedriver.exe` 放进缓存目录」等于让 vsum
+  执行你放进去的二进制。只从 `msedgedriver.microsoft.com` / `chromedriver.chromium.org`
+  这类官方来源取，并核对版本号；selenium-manager 自己的下载是另一套机制，这里不校验它。
+- **`VSUM_BROWSER_ARGS` 能注入任意启动参数**：它是你自己的环境变量，别在共享/CI 环境里由别人设
+  （`--user-data-dir`、`--proxy-server` 都能被它改掉）。
+
 实测通过的命令（这一串能跑就说明链路是好的）：
 
 ```powershell

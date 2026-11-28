@@ -11,6 +11,7 @@ U+4E00–U+9FFF 的对子，并剔除在简体文本里也合法的字，避免�
 """
 import json
 import os
+import re
 
 BLOCK = frozenset("於麼麽儘祇牠喫夥佔瞭乾藉著覆")
 _MAP = None
@@ -31,3 +32,18 @@ def to_simplified(text):
         return text
     table = _load()
     return "".join(table.get(ch, ch) for ch in text)
+
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+C0 = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def safe_term(text):
+    """清掉终端控制序列再打印。
+
+    逐字稿可能带着别人录屏里的 ANSI 转义（或 `\\x1b]0;…` 这类 OSC），原样 print
+    到终端就会改标题、清屏、甚至让日志看着像别的命令输出。
+    """
+    if not text:
+        return ""
+    return C0.sub("", ANSI.sub("", str(text)))

@@ -11,11 +11,13 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
+from . import manifest as manifest_mod
+from .textnorm import safe_term
 from .timefmt import mmss
+from .toolpath import which
 
 
 def load_segments(path):
@@ -113,12 +115,34 @@ def find_main(argv=None):
             seen.add(j)
             s = segments[j]
             mark = ">" if j == idx else " "
-            print("%s [%s] %s" % (mark, mmss(s["start"]), (s.get("text") or "").strip()))
+            print("%s [%s] %s" % (mark, mmss(s["start"]), safe_term(s.get("text")).strip()))
         if args.context:
             print("")
     print("")
     print("剪出来听：vsum clip %s %s -o clip.mp4" % (base, mmss(hits[0]["start"])))
     return 0
+
+
+def _trusted_input(base, cand, want_sha):
+    """manifest 里的输入路径能不能用：在产物目录内，或 sha256 和 manifest 对得上。
+
+    产物目录是「别人给的目录」时，manifest.json 里的路径就是不可信输入——指向
+    `~/.ssh/id_rsa` 也会被当成视频送进 ffmpeg。目录内的相对名照旧可用；
+    目录外只有在内容确实等于 manifest 记的 sha256 时才认。
+    """
+    if not cand or not os.path.isfile(cand):
+        return None
+    try:
+        real = os.path.realpath(cand)
+        root = os.path.realpath(base)
+        inside = real == root or os.path.commonpath([real, root]) == root
+    except (OSError, ValueError):
+        inside = False
+    if inside:
+        return cand
+    if want_sha and manifest_mod.sha256_file(cand) == want_sha:
+        return cand
+    raise ValueError("manifest 里的输入路径不在产物目录内，也不匹配 sha256：%s" % cand)
 
 
 def _source_media(base):
@@ -128,11 +152,15 @@ def _source_media(base):
         try:
             with open(man_path, encoding="utf-8") as fh:
                 man = json.load(fh)
-            cand = (man.get("input") or {}).get("path")
-            if cand and os.path.exists(cand):
-                return cand, "manifest"
+            info = man.get("input") or {}
+            cand = info.get("path")
+            if cand and not os.path.isabs(cand):
+                cand = os.path.join(base, cand)   # 新 manifest 只记文件名
+            trusted = _trusted_input(base, cand, info.get("sha256"))
+            if trusted:
+                return trusted, "manifest"
         except (OSError, ValueError):
-            pass
+            raise
     for name, why in (("video.mp4", "video.mp4"), ("audio.wav", "audio.wav")):
         p = os.path.join(base, name)
         if os.path.exists(p):
@@ -180,7 +208,7 @@ def clip_main(argv=None):
         print("error: 这个目录里没有原视频/音频（只在 manifest、video.mp4、audio.wav 里找）",
               file=sys.stderr)
         return 4
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = which("ffmpeg")
     if not ffmpeg:
         print("error: 没找到 ffmpeg", file=sys.stderr)
         return 3
@@ -200,5 +228,5 @@ def clip_main(argv=None):
         return 4
 
     print("片段 %s – %s（%s）-> %s" % (mmss(start), mmss(end), why, args.out))
-    print("原话 [%s] %s" % (mmss(seg["start"]), (seg.get("text") or "").strip()))
+    print("原话 [%s] %s" % (mmss(seg["start"]), safe_term(seg.get("text")).strip()))
     return 0

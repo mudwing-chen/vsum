@@ -355,15 +355,21 @@ def _help_for(name):
 
 
 def _utf8_on_pipe():
-    """输出被重定向或接管道时统一 UTF-8。
+    """输出被重定向或接管道时写 UTF-8（可用 VSUM_IO_ENCODING 覆盖）。
 
-    Windows 控制台默认 cp936/cp1252，重定向时 Python 也按本地编码写，中文会变成
-    \\uXXXX 转义，机读和日志都不可用；终端里保持本地编码不动。
+    Windows 控制台默认 cp936/cp1252，重定向时 Python 也按本地编码写：中文会变成
+    \\uXXXX 转义，`⚠` 这类字符甚至直接 UnicodeEncodeError。所以管道里默认写 UTF-8，
+    终端里保持本地编码不动。
+
+    代价是：父进程若按 locale（中文 Windows 的 cp936）解码会 UnicodeDecodeError。
+    脚本集成时二选一——显式 `encoding="utf-8"` 读，或设 `VSUM_IO_ENCODING=gbk`
+    让 vsum 按本机编码写。
     """
+    enc = (os.environ.get("VSUM_IO_ENCODING") or "").strip() or "utf-8"
     for stream in (sys.stdout, sys.stderr):
         try:
             if not stream.isatty():
-                stream.reconfigure(encoding="utf-8", errors="replace")
+                stream.reconfigure(encoding=enc, errors="replace")
         except (AttributeError, ValueError, OSError):
             pass
 
