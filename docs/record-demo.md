@@ -8,7 +8,7 @@ README 第一屏现在只有文字。一段 20 秒的 GIF 比再写 500 字有�
 1. **先确认环境是好的**（不然录到一半会弹出报错）：
 
    ```bash
-   vsum doctor          # 每一行都该是 ok；hf-cache 不能是 MISSING
+   vsum doctor          # MISSING 行先解决（hf-cache 尤其不能是 MISSING）；warn / extra 是建议，不影响转写
    ```
 
 2. **准备一条短视频**（30 秒到 2 分钟最好，太长的话录屏会等很久）：

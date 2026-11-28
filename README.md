@@ -1,11 +1,12 @@
 # vsum
 
-把一段视频变成**每一句都能定位到秒**的逐字稿。本地跑，不上传，产物可核对、可搜索、可剪。
+把视频转成带时间戳的逐字稿，跑在本机，不上传。产物是一个目录：逐字稿、srt/vtt 字幕、摘要，
+以及一份记着输入 sha256 和解码参数的 manifest。
 
 [English](README.en.md) · 中文
 
 ```bash
-# 需要 Python 3.9+ 和 ffmpeg（PyPI 上的 `vsum` 是同名的另一个项目，别装错）
+# 需要 Python 3.9+ 和 ffmpeg
 uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"
 # 或者：pipx install "git+https://github.com/mudwing-chen/vsum"
 
@@ -19,21 +20,20 @@ vsum clip out/ 03:41 -o clip.mp4
 
 ---
 
-## 它和「视频总结工具」不是一类东西
+## 它能做什么
 
-大多数工具给你一段生成的摘要，你没法核对。vsum 给你**能核对的原始材料**：
+摘要本身没法核对：你不知道它有没有编。vsum 先产出逐字稿，再让摘要的每一条回到某一段原文；
+回不去的删掉，删了几条记在 `result.json`。
 
-| | 普通总结工具 | vsum |
-|---|---|---|
-| 输出 | 一段摘要 | 逐字稿 + 字幕 + 出处链 |
-| 引用 | 说不出第几秒 | 每段一行 `[mm:ss]` |
-| 核对 | 无 | 摘要每条要点必须能在原文找到，找不到就删并计数 |
-| 搜索 | 无 | `vsum find out/ "关键词"` → 时间戳 |
-| 剪片 | 无 | `vsum clip out/ 03:41 -o clip.mp4` |
-| 复现 | 无 | `manifest.json` 记 sha256 / 模型 / 设备 / 全部解码参数 |
+| 你要做的事 | vsum 里对应什么 |
+|---|---|
+| 引用某句话 | 每段一行，行首 `[mm:ss]`（满一小时 `[H:MM:SS]`），直接当锚点 |
+| 确认摘要没瞎编 | 摘要每条要点回查原文，回不去的删掉并计数 |
+| 找「那句话在第几秒」 | `vsum find out/ "关键词"`，命中项带秒数 |
+| 把那段剪出来 | `vsum clip out/ 03:41 -o clip.mp4`，前后各留 1.5 秒 |
+| 换台机器重跑 | `manifest.json` 记 sha256 / 模型 / 设备 / 全部解码参数 |
 
-> 摘要是**草稿**，结论以 `transcript.md` 为准。这是设计选择，不是缺陷——
-> 机器能保证「有出处」，保证不了「摘得对」。
+> 摘要是草稿，结论以 `transcript.md` 为准。
 
 ## 它会自己发现写错了
 
@@ -61,25 +61,26 @@ $ vsum fix out/ --from-ocr out/ocr.json --apply
 
 ## 看一眼真实产物
 
-完整文件在 [`docs/example/`](docs/example/)（一条 4 分 01 秒的中文视频）。
+示例在 [`docs/example/`](docs/example/)：一条 4 分 01 秒的中文视频，`transcript.md`、`summary.md`、
+`segments.json` 都是完整输出。
 
 `transcript.md`：
 
 ```markdown
-[00:08] ⚠ Cloud的Fibre 5.2花了209美元。
+[00:09] ⚠ Cloud的Fibre 5.2花了209美元。
 [00:11] ⚠ GPD 602 Astra只花了不到10美元。
 [00:48] 两个都是105万token的上下文。
 ```
 
 - 每段一行，行首是引用锚点
-- `⚠` 是全片置信度最低的 10%（按排名取，恰好 10%）
+- `⚠` 是全片置信度最低的一批段（按 `avg_logprob` 排名，数量约 10%；同分的要么全标要么全不标）
 - 每 5 分钟自动分章
 
 `summary.md`：
 
 ```markdown
 ## 概览
-- Cloud的Fibre 5.2花了209美元 [00:08]
+- Cloud的Fibre 5.2花了209美元 [00:09]
 - 10个一个多月,GPD终于发新模型了 [00:00]
 
 ## 关键数字
@@ -98,10 +99,10 @@ uv tool install "vsum @ git+https://github.com/mudwing-chen/vsum"
 #   pipx install "git+https://github.com/mudwing-chen/vsum"
 #   pip install "vsum @ git+https://github.com/mudwing-chen/vsum"
 
-vsum doctor          # 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR
+vsum doctor          # 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / yt-dlp / OCR
 ```
 
-首次运行会下载模型（默认 `small`，约 480 MB）。国内网络下 HuggingFace 常常连不上：
+首次运行会下载模型（默认 `small`，约 480 MB）。`doctor` 里 `warn` 行是建议（模型未缓存、磁盘空间小），不影响退出码；只有 `MISSING` 行表示必须装的依赖缺失（`extra` 是可选依赖）。国内网络下 HuggingFace 常常连不上：
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com     # Windows: set HF_ENDPOINT=...
@@ -114,14 +115,21 @@ export HF_ENDPOINT=https://hf-mirror.com     # Windows: set HF_ENDPOINT=...
 ```bash
 vsum talk.mp4 -o out/                       # 本地文件
 vsum "https://www.bilibili.com/video/BV..." -o out/link
-vsum batch urls.txt -o out/batch            # 一串链接，串行，失败不中断
+vsum batch urls.txt -o out/batch --jobs 2   # 每条一个子进程；失败记进 batch.json，不中断
 vsum find out/ "价格" --context 1            # 搜索，带上下文
 vsum clip out/ 01:14 -o clip.mp4            # 剪出那一段，前后各留 1.5 秒
 ```
 
-常用参数：`--model tiny|base|small|medium|large-v3`（默认 small）、`--lang zh|en|auto`、
-`--summary extractive|llm|none`、`--clean`、`--force`、`--json`（stdout 只打一行）、
-`--no-context`（见下）。
+常用参数：`--model tiny|base|small|medium|large-v3|auto`（默认 small；auto 在 GPU 上取显存
+上限，CPU 上固定 small）、`--lang zh|en|auto`、`--summary extractive|llm|none`、
+`--batch-size N|auto`（默认 1；>1 走批推理，切段会与串行不同）、`--vad-threshold 0.5`、
+`--vad-min-speech-ms`、`--vad-min-silence-ms`、`--vad-pad-ms`、`--no-vad`、`--chunk-length`、
+`--llm-url` / `--llm-model` / `--llm-key`（云服务鉴权，见下）、`--clean`、`--force`、
+`--json`（stdout 只打一行）、`--no-context`（见下）。
+`vsum batch` 另有 `--jobs N`（默认 1，每条一个子进程）与 `--devices cuda:0,cuda:1`（给并行
+进程分卡）。`--clean` 额外生成 `transcript.clean.md`（去口水词与重复），
+逐字稿 `transcript.md` 保持原样；默认提示词按语言选——`--lang en` 喂英文提示词，
+`auto` 不预设（不猜语言就不该塞偏置）。
 
 ### 全部命令
 
@@ -140,20 +148,20 @@ vsum clip out/ 01:14 -o clip.mp4            # 剪出那一段，前后各留 1.5
 | `vsum fix DIR` | 按词表修正（默认只预演，`--apply` 才写盘） |
 | `vsum audit DIR` | 词表命中的体检报告 |
 | `vsum mine DIR` | 挖词表外的变体候选 |
-| `vsum doctor` | 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / OCR |
+| `vsum doctor` | 逐项检查 python / ffmpeg / 模型 / 显卡 / 浏览器 / yt-dlp / OCR |
 | `vsum bench --audio FILE` | 在本机音频上量 RTF，比较 compute_type |
 | `vsum eval --manifest FILE` | 按 manifest 算 CER 与术语召回 |
 | `vsum holdout --corpus DIR` | 固定语料上的 CER 与回归比较 |
 
-## `find` 和 `clip`：这才是有用的部分
+## `find` 和 `clip`：搜索与剪辑
 
 ```bash
 $ vsum find out/ 价格
 2 处命中（价格）
-> [00:08] Cloud的Fibre 5.2花了209美元。
+> [00:09] Cloud的Fibre 5.2花了209美元。
   [00:11] GPD 602 Astra只花了不到10美元。
 
-剪出来听：vsum clip out/ 00:08 -o clip.mp4
+剪出来听：vsum clip out/ 00:09 -o clip.mp4
 ```
 
 `find` 支持多个词（全部命中才显示）、`--context N` 带上下文、`--json` 给程序用。
@@ -202,21 +210,21 @@ medium / large-v3 需要下载 1.5 GB / 3 GB，无显卡时按上面比例还要
 
 | 文件 | 内容 |
 |---|---|
-| `transcript.md` | YAML 头 + 每段一行 `[mm:ss]` + 低置信 `⚠` + 每 5 分钟分章 |
+| `transcript.md` | YAML 头 + 每段一行 `[mm:ss]`（满一小时 `[H:MM:SS]`）+ 低置信 `⚠` + 每 5 分钟分章 |
 | `transcript.txt` / `.srt` / `.vtt` / `.plain.txt` | 带时间戳 / 字幕 / 纯文本 |
 | `summary.md` | 概览 / 分章 / 关键数字 / 关键词 / 存疑段，每条带 `[mm:ss]` |
 | `segments.json` | 段级数据：`start` `end` `text` `avg_logprob` `no_speech_prob` `compression_ratio` `temperature` |
-| `manifest.json` | 输入 sha256、解码参数、模型、设备、产物清单、告警 |
+| `manifest.json` | 输入 sha256、解码参数、模型、设备、产物清单、告警（`warnings` 是句子列表，逐条明细在 `export`） |
 | `export.source.json` | 导出所用的 segments 路径 + sha256 + cue 数（字幕自己证明不了出处） |
 | `result.json` | 机器可读结论：`ok` `counts` `reused` `summary{mode,bullets,dropped}` `sha256` `warnings` |
 
-## 摘要的真相
+## 摘要怎么保证有出处
 
 默认**抽取式**：候选句按「含数字 / 含拉丁词 / 含词表术语 / 含提示词 / 长度」打分，
-三个小节依次取还没用过的句子（全局去重），然后过一道硬门——要点必须是某段原文的子串、
+三个小节依次取还没用过的句子（全局去重），然后过一道硬门：要点必须是某段原文的子串、
 且时间戳与段起点相差 ≤1 秒，否则删掉并记进 `dropped`。
 
-它保证**每条要点都有出处**，不保证**摘得对**。
+它保证每条要点都有出处，不保证摘得对。
 
 要真正"写出来"的摘要，用 LLM：
 
@@ -229,6 +237,10 @@ LLM 模式分两级：
 
 - **一句话**（模型改写，不保证逐字准确，会明确标注）
 - **要点**（必须是原文片段，照样过回查门）
+
+本地 Ollama / LM Studio 不用鉴权；OpenAI、DeepSeek 这类云服务要带 key：`--llm-key sk-...`，
+也可以只设环境变量 `VSUM_LLM_KEY` 或 `OPENAI_API_KEY`。vsum 只发
+`Authorization: Bearer <key>`，不把 key 写进日志、`manifest.json` 或 `result.json`。
 
 长视频会按字符预算分块请求，部分块失败不影响其他块，失败情况记进 `warnings`。
 LLM 不可用时自动退回抽取式，并把原因一起记进 `warnings`——包括 HTTP 状态码和服务端原话
@@ -244,7 +256,7 @@ LLM 不可用时自动退回抽取式，并把原因一起记进 `warnings`—�
 ## 术语修正（要自己维护词表）
 
 转写对专有名词（产品名、人名、版本号）几乎必错，而答案通常印在画面上。
-**换更大的模型不解决这个问题**——实测 `small` 与 `medium`、CPU 与 GPU，错法完全一致。
+换更大的模型不解决这个问题：实测 `small` 与 `medium`、CPU 与 GPU，错法完全一致。
 所以 vsum 的做法是把画面取回来对照：
 
 ```bash
@@ -287,9 +299,9 @@ vsum mine out/                   # 挖词表外的变体候选（需人工确认
 
 ## 不做什么
 
-- **不做会议纪要**。没有说话人分离，多人抢话的场景请用飞书妙记或通义听悟——第三方实测
+- **不做会议纪要**。没有说话人分离，多人抢话的场景请用飞书妙记或通义听悟：第三方实测
   它们在那件事上是 94% / 93%，vsum 现在连「谁在说」都标不出来。
-- **不做在线服务**。没有账号、没有上传、没有额度限制，也意味着没有网页版。
+- **不做在线服务**。没有账号、没有上传、没有额度限制，也没有网页版。
 - **不保证摘要「对」**。只保证每条要点都能回到原文的某一秒。
 
 ## 平台
@@ -308,7 +320,6 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 - **转写不可复现**：解码带温度回退，同一段音频 `--force` 再跑，段数与文本都可能变；
   换显卡/换精度也会变。要复用就保留 `segments.json`，复用前会校验输入 sha256、
   模型、语言、context 设置。
-- **摘要只保证出处**，不保证摘得对。
 - **LLM 摘要只用协议级假服务验证过**（起一个 OpenAI 兼容的本地服务，验分块、解析、回查、
   两级渲染），没在真实模型上做过质量评估——它写得好不好取决于你接的模型。
 - **术语指标没有真人标注集**：仓库里的漏报是回归断言，不是准确率。
@@ -337,10 +348,11 @@ B站 / YouTube 走 yt-dlp（`pip install 'vsum[yt]'`）。
 | 码 | 含义 |
 |---|---|
 | 0 | 成功 |
-| 2 | 用法或输入错误（文件不存在、参数不对、JSON 坏了） |
+| 1 | `vsum find` 没有命中（便于脚本判断，不算错误） |
+| 2 | 用法或输入错误（文件不存在、参数不对、JSON 坏了、`clip` 的时间格式不对或不在任何一段里） |
 | 3 | 缺依赖（没装 faster-whisper / selenium / ffmpeg） |
-| 4 | 转写或抓取失败（含模型加载失败） |
-| 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`） |
+| 4 | 转写、抓取或剪片失败（含模型加载失败、找不到原视频） |
+| 5 | 评测不达标（`eval --min-cer` / `holdout --max-cer`），或 `batch` 有失败项 |
 | 130 | Ctrl-C 中断 |
 
 ## 开发

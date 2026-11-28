@@ -2,6 +2,205 @@
 
 按「会改变产物」和「只是更方便」两类记。版本号遵循语义化版本。
 
+## 未发布 — 审计修复
+
+一轮外部审计把「按文档用」和「按默认用法用」的差距摊开了：默认路径（`vsum x.mp4 -o out`）
+一直是好的，最扎眼的几个问题全藏在文档写着、但测试没覆盖的分支里。
+
+### 新增 · 转写的自动档
+
+- `--model auto`：GPU 上取 `hardware.model_cap`（24 GB → `large-v3`），CPU 上固定
+  `small`；默认仍是 `small`，现有行为不变。`vsum doctor --model auto` 会打印会选哪个。
+- `--batch-size N|auto`：`N>1` 走 `BatchedInferencePipeline`；`auto` 按显存给 16/8/4，
+  CPU 禁用。默认 1 = 原来的串行路径。API 不兼容（旧版 faster-whisper 不接
+  `initial_prompt`）时打印 warning 退回串行，`manifest.decode.batch_fallback` 记原因。
+- 转写中途 OOM 自动降档：batch 减半 → compute 降级 → 模型降档 → CPU，最多 3 次，每次从头
+  解码，不落半截稿；`decode.fallbacks` 与 warnings 记每一次。全阶梯失败才退出 4。
+- `vsum batch --jobs N --devices cuda:0,cuda:1`：每条链一个子进程，按 `CUDA_VISIBLE_DEVICES`
+  分卡；`batch.json` 增量写盘，Ctrl-C 先写盘再退出。
+- VAD 与切块参数：`--vad-threshold`、`--vad-min-speech-ms`、`--vad-min-silence-ms`、
+  `--vad-pad-ms`、`--no-vad`、`--chunk-length`；这些进 `config_sha256`，改了就重转写。
+
+### 会改变产物
+
+- **批推理会改变产物**（opt-in）：`--batch-size` > 1 时按窗口独立解码，
+  `condition_on_previous_text` 强制关闭，段边界、时间戳与串行不完全一致。默认 1，不受影响。
+- **`vsum transcribe` 成功也退出 1**：`main()` 的 SUB 分支写的是 `return rc or 0`，而该命令
+  原样返回 `pipeline.run()` 的 result 字典，`sys.exit(dict)` 把字典打到 stderr 并以 1 退出；
+  `--json` / `--quiet` 也只在默认分支生效。按 README 写全命令名的脚本全解析失败。现在子命令
+  与默认命令走同一个入口，非 int 返回值一律算成功。
+- **摘要回查门和被校验的段不是同一批**：prompt 喂原始段、校验用 `merge_short()` 的合并块，
+  而合并块只记首段 start。LLM 引用块中后部原句时时间差超 1 秒，真原文被整条删掉，最坏情况
+  `## 要点` 整节为空。回查改为「块内任一段命中即可」，并回落到原始段。
+- **低置信标记退化**：`k = max(1, int(n*0.1))` 让 1–9 段的短稿恒定标 1 条，并列按段号截断，
+  于是示例的 143 段里 14 条最低值并列、标记全落在开头 30 秒。现在先按 `avg_logprob` 绝对下限
+  筛，再取排名 cutoff，同分整组进/整组出（超过 25% 就整组不进）。
+- **时间两套口径**：`mmss()` 用 `int()`、`srt_time()` 用 `round()`，59.9996s 在 md 是
+  `[00:59]`、在 SRT 是 `00:01:00,000`。现在统一四舍五入，满一小时另给 `H:MM:SS`。
+- **manifest 与 result 的 warning 语义分裂**：manifest 里是导出告警字典、result 里是字符串
+  列表，LLM 退避告警只进 result。现在两边都是同一份字符串列表；`result.json` 的 `sha256`
+  从 3 个产物扩到全部产物；manifest 先写、`result.json` 最后写，中途失败不再留下半新半旧。
+- **评测会给出假满分**：`isdigit()` 过滤字幕序号把「2024」这种正文整条丢掉，VTT 的 `cue-1`
+  标识行被拼进上一条正文；语料目录只有一个候选文件时回退到它，可能拿假设本身当参考
+  （CER 恒 0、`--max-cer` 静默通过）。现在数字正文保留、标识行只在其紧跟时间戳时才跳过、
+  挑不到参考就报错。
+- **0 段转写报 ok**：VAD 过滤光或空音频时产物全空、退出 0，与 `TranscribeError` 的
+  docstring 矛盾。现在算失败（退出 4），并在写盘前抛出。
+- 摘要小问题：关键词对拉丁词大小写敏感（`Fable` / `fable` 分开计）、存疑段取「时间最早 5 条」
+  再排序（应为全局最差 5 条）、分章可能只剩标题、LLM 的综述未校验直接进 markdown。
+
+### 不改变产物，但会改变你的操作体验
+
+- **`fix --apply` 零命中不再删 `corrections.json`**：它是输入（手写顶层 `corrections` 格式
+  同样受支持），把「本轮没命中」当「清单过期」会在正常操作里静默删用户数据。
+- **抖音下载不再毁掉上一次的视频**：先写 `.part`、校验 Content-Type / 大小 / 是否 HTML 页面，
+  通过才原子替换；失败只删临时文件。同一链接重跑直接复用已下好的视频（`--force` 重下）。
+  `detect()` 改成按 host 匹配，`notyoutube.com` 不再算 YouTube；yt-dlp 禁播放列表、转义 `%`。
+- **复用转写不再最后一步崩**：输入 sha、模型、解码参数都对上就复用 `segments.json`，但
+  manifest 仍要记 `audio.wav` 的 sha256——为省空间删掉 `audio.wav` 后重跑，会在导出、摘要、
+  `result.json` 全写完之后才 `FileNotFoundError`。现在缺了就重抽音频。
+- **复用条件纳入所有改变输出的解码参数**：`--words`、`WHISPER_HOTWORDS`、`WHISPER_PROMPT`、
+  `WHISPER_COND` 任一变都重转写（manifest 里记 `decode.config_sha256`）。
+- **文件类错误带文件名**：以前只有 `error: No such file or directory`。
+- **OCR / 浏览器错误归类**：OCR 的「没 ffmpeg」「没引擎」改成 `DependencyError`（3）、
+  「一帧都没抽出来」改成 `InputError`（2），不再裸 traceback + 1；登录路径 `Ctrl-C` 也会
+  关浏览器（`KeyboardInterrupt` 是 `BaseException`，原来的 `except Exception` 接不住），
+  页面加载超时包成 `BrowserError`。
+- **`WHISPER_DEVICE=cpu` 时 `compute_type` 跟着换**：以前设备取环境变量、精度仍来自 GPU 探测，
+  CPU 后端不支持 `float16`，报「模型加载失败（small / cpu / float16）」看不出根因。
+- 其它边界：`lookup.parse_time` 拒绝 `1:75` 与负值；`audit` 的型号正则不再把 `I'm 3 分钟`
+  当 `m-3`；`doctor` 把「模型未缓存 / 磁盘小」降为警告并补 yt-dlp 检查（缺 yt-dlp 只提示）。
+
+### 文档与测试
+
+- references/troubleshoot.md 删掉「pyproject 已钉 `av>=11,<14`」（实际不锁）；terms.md 的抽帧
+  规则按 `ocr.py` 的实际实现重写（原文提到的 `compression_ratio` 抽段并不存在）；退出码表补齐
+  1 / 2 / 4 / 5；`docs/example/` 的产物用当前代码重新生成（`transcript.md` 是完整 143 段，
+  不再标「前 90 秒节选」）。
+- 补测试：`vsum transcribe` 的退出码与 `--json` / `--quiet`、`fix --apply` 零命中保留清单、
+  删掉 `audio.wav` 后的复用、OCR 的错误分类、文件类错误的提示内容、`--words` / `WHISPER_PROMPT`
+  触发重转写、型号正则的假阳性；新增 `tests/test_audit.py`。
+
+### 第二轮复查
+
+第二轮复查没找到高危项，都是「按文档用会别扭、但不会毁数据」这一类：
+
+#### 会改变产物
+
+- **默认提示词不看语言**：`--lang en` 一直喂的是「以下是普通话视频内容。」，英文音频容易被
+  带出中文偏置。现在按语言选（`en` 用英文提示、`auto` 不给提示、`zh` 不变），
+  `WHISPER_PROMPT` 照旧全局生效；提示词进 `config_digest`，换了语言自然重跑。
+- **`--lang auto` 的产物头写 `auto`**：md/manifest 的 `language` 现在写检测到的语言
+  （`decode.detected_language`），请求值另记，复用判断仍比请求值。
+- **导出**：空 `segments.json` 现在退出 2（以前写出四个空文件还退 0）；负起点被夹到 0 之后，
+  若会压住下一条 cue，那条改从被夹段的结尾开始（新增 `overlap_after_fix` 记录）。
+- **复用时的时长**：上次 `duration` 是 `null` 时，这次音频在手边就补探一次；
+  `probe_duration()` 增加 wav 头零依赖回退，缺 ffprobe 也能读出时长。
+- **清洗稿不再带「术语修订」附录**：`transcript.clean.md` 不改词表，那节只会写「无」。
+
+#### 只是更方便
+
+- **doctor 不再把 ffprobe 当必需依赖**：`vsum` 自己不用它（时长探测会退回 PyAV / wav 头），
+  缺了记为 `warn`，不再拉高退出码。
+- `--clean` 的帮助文案改成它实际做的事（生成 `transcript.clean.md`，`transcript.md` 不变）。
+- `vsum help help` 打印总览并退出 0（以前报「没有这个子命令」）。
+- 不认识的链接不再先建目录：`vsum fetch https://example.com/x -o dir` 不会留下空 `dir`。
+
+#### 给 agent 的手册（SKILL.md）重写
+
+- **版本前置**：原来第 0 步直接 `vsum doctor`，而 PATH 上可能是 0.3.x 的旧安装（没有
+  `doctor/find/clip/ocr/fix/batch`，也不认新参数），照着做会连续吃 argparse 报错。现在先查
+  `vsum --version`，低于 0.6 就在仓库根目录改用 `python3 -m vsum`（Windows `py -3 -m vsum`）。
+- **补成功判据与退出码**：新增「收尾判据」六条（rc0、`result.json.ok`、`counts.segments > 0`、
+  `summary.dropped`、`warnings`、`counts.low_conf`）和完整退出码表（0/1/2/3/4/5/130 及处置）。
+- **消除与 README 的漂移**：`--lang zh|en|auto` 及提示词行为、`--no-context`、`--words`、
+  `--force`、`--json/--quiet`、`--browser/--headless/--profile` 都写清了「什么时候用」。
+- **结构与语气**：正文统一成对 agent 的指令，产物清单/参数细节指到 README 与 references，
+  SKILL 只留决策所需（跑什么、按什么顺序读、什么算成功、失败怎么处置）。
+- **和 0.6.1 对齐**：0.3.x 其实有 `--json`（只是没有子命令）；`doctor` 的 `MISSING`
+  还包括 `av` 与 python 版本；`--force` 不会重抽 `audio.wav`（sha256 对得上就复用）；
+  `batch` 补上 `--jobs` / `--devices`；显存不足先走自动降档，再谈手动降模型；
+  description 补一句英文触发，方便英文请求命中。
+
+### 第三轮复查（转写增强上线后）
+
+#### 会改变产物
+
+- **`--lang auto` 在真实 faster-whisper 下必崩**：`Tokenizer` 会校验语言码，`"auto"` 不在
+  `_LANGUAGE_CODES` 里，直接抛 `ValueError: 'auto' is not a valid language code`；假模型不校验，
+  所以端到端测试全绿。现在 `infer_kwargs()` 把 `auto` 翻成 `None`（faster-whisper 的自动检测
+  写法），manifest 仍记请求值，检测到的语言记在 `decode.detected_language`。
+- **批推理永远无法复用**：manifest 记的 `condition_on_previous_text` 是实际生效的 `False`，
+  复用检查却拿命令行的 `True` 去比，`--batch-size > 1` 每次重跑都重新转写。现在有
+  `config_sha256` 时只信指纹，逐项比较只留给 0.6 之前没有指纹的 manifest。
+
+#### 更安全 / 少误导
+
+- **加载模型时 OOM**：以前 `"CUDA out of memory"` 命中 CUDA 提示词，被误判成「CUDA 起不来」
+  并提示装 cublas，小显存选大模型时直接退 CPU。现在先按模型阶梯降档，实在不行才退 CPU，
+  `decode.fallbacks` 记 `oom_load`。
+- **OOM 后释放旧模型**：失败的那个模型还留在进程缓存里继续占显存，降档重试更容易再 OOM。
+  现在 OOM 路径把它从缓存删掉并尽量 `empty_cache()`。
+- **`--batch-size 0`** 不再被当成 `auto`（GPU 上会静默变成 4/16）；按「必须 >= 1」报错。
+- **`--devices 0,1`** 按 CUDA 序号理解（以前只认 `cuda:` 前缀，裸数字会被塞进
+  `WHISPER_DEVICE=0`，加载必失败）。
+- **`--no-vad` 时不再记录没生效的 VAD 参数**：`decode.vad_parameters` 只写实际传给引擎的值。
+- 文案：`--model` 帮助补上 `auto`；`--chunk-length` 说明在批推理下也生效；
+  README 的 batch 示例带上 `--jobs`。
+
+### 第四轮复查（批推理与并行上线后）
+
+#### 会改变产物
+
+- **低置信 `⚠` 与 `counts.low_conf` 同源**：`to_md()` 以前在 `sanitize()` 之后的 cue 上重算
+  低置信段，`pipeline` 的 `counts` 却按原始段落算；只要有空文本段被丢掉，cue 号整体前移，
+  `⚠` 就标到别的段上、`low_conf_segments` 也和 `result.json` 对不上。现在 cue 带 `src`
+  源段号，`to_md()` 直接用 pipeline 传进来的 `meta["low_conf"]`。
+- **复用转写不再复读上一轮的降档警告**：复用路径的 `decode` 来自旧 manifest，
+  `batch_fallback` / `fallbacks` 是上一轮发生过的事。以前第二次跑（`reused: true`、根本没调
+  模型）仍会在 `result.json` 里写「批推理不可用，已退回串行」。现在只在真正跑模型时拼这段
+  警告。
+- **中文单字 variant 直接拒绝加载**：词边界只挡 ASCII，单字中文变体（`云` → `云端`）会在任意
+  合成词里命中，那不是修正而是污染。`termrules.load()` 现在对长度 < 2 的中文 surface 抛
+  `ValueError`。当前内置表 18 条全是英文，不受影响。
+
+#### 更安全 / 少误导 / 少浪费
+
+- **LLM 摘要可带鉴权**：新增 `--llm-key`（也读 `VSUM_LLM_KEY` / `OPENAI_API_KEY`），请求带
+  `Authorization: Bearer <key>`；key 不进日志、`manifest.json`、`result.json`。以前只发
+  `Content-Type`，README 却写「cloud API 可用」，OpenAI / DeepSeek 这类必然 401。
+- **`vsum batch` 的 `counts` 从 `items` 重算**：以前只初始化 `ok/skipped/failed`，中断会写
+  `interrupted`、并行会留 `pending`，`total` 与 `counts` 之和不等。现在五键齐全，每次写盘
+  都按明细重算。
+- **并行日志挪到 `<out>/.logs/`**：子进程日志不再散在目标目录里冒充产物；成功即删、失败保留
+  并在条目的 `error` 里给出路径，目标目录也不再预先创建（失败时不留空壳）。
+- **`--jobs 1` 也认 `--devices`**：以前串行分支根本不看 `devices`，多卡机器上静默用第 0 张。
+  现在串行也按第一个设备设 `WHISPER_DEVICE` / `CUDA_VISIBLE_DEVICES`，多卡时提示只用第一个；
+  并行没给 `--devices` 时如实报「探测到 N 张卡」而不是「只认出 0 张卡」。
+- **批推理回退串行后不再空跑降档阶梯**：`_run_model` 发现已退回串行时把 state 的 batch 直接
+  置 1，OOM 后不会先做 4→2→1 这几次对串行毫无意义的尝试。
+- **`vsum doctor --model auto` 不再报「model:auto 未缓存」**：先按显存解析成具体模型名再查
+  缓存，输出 `model:auto ok → small（…faster-whisper-small）`。
+- **`hf-cache` 缺失记 `warn`**：缓存目录不存在会自己重建、没下过也能自动下载，都不该让
+  doctor 退出 3（真加载失败时转写本身报 3）。
+- 删掉死代码 `transcribe.pick_device()`（设备判定早已统一走 `hardware.resolve()`）和
+  `textnorm.traditional_chars()`。
+
+#### 文档与测试
+
+- `references/platform.md` 的 batch 段改成「默认串行 / `--jobs` 并行 / `--devices` 分卡」，
+  补 `.logs/` 与五键 `counts`；`references/troubleshoot.md` 的 OOM 行补自动降档阶梯
+  （batch → compute → 模型 → CPU，最多 3 次，记 `decode.fallbacks`）。
+- `README.md` / `README.en.md` / `SKILL.md` 补 `--llm-key` 与云服务鉴权说明；
+  `references/terms.md` 补中文 variant 的边界限制。
+- 新测试：复用不复读旧降档警告（`test_p2`）、低置信 `⚠` 与 `counts` 同源含空段场景
+  （`test_exports`）、`Authorization` 头与无 key 时不发（`test_llm`）、中文单字 variant 被拒
+  （`test_terms`）、`--jobs` 的真 Popen 路径（`test_batch`：两个坏子进程、五键 counts、
+  日志在 `.logs/`、不留空目录）。
+- **`config_sha256` 仍按请求的 `--batch-size` 算**：`--batch-size 4` 那次
+  `condition_on_previous_text` 被强制关掉、`--batch-size 1` 那次是开的，两者产物本来就不同，
+  按实际跑成的 batch 重算反而会让「同一条命令」每次 fallback 之后都重转一遍。
+
 ## 0.6.1 — 2026-11-23
 
 `vsum ocr` 上一版**在真视频上基本没用**：60 秒跑下来 4 条候选全是噪音，真正该抓的错一个没抓到。

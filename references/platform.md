@@ -69,6 +69,8 @@ yt-dlp 对抖音已经失效（403 / `Fresh cookies needed`），别在它上面
 
 细节接口和下载各重试一次。接口报的时长与文件实测差超过 1 秒时只记 warning（文件已经落盘，继续用），不中断。
 
+下载先写 `video.mp4.part`，校验不是 HTML 页面、体积不小于 64 KB 之后才原子改名成 `video.mp4`；失败只删临时文件，**上一次下好的视频原样留着**。同一链接在同一个目录里重跑会直接复用已有的视频（`play.json` 的 `source_url` 对得上、文件够大就算可复用），要重下加 `--force`。
+
 失败时按这个顺序降级：
 
 1. `vsum login douyin` 重新扫码 → 重试
@@ -98,7 +100,12 @@ vsum batch index.json -o out/batch --json
 - 清单：`urls.txt` 一行一条（`#` 开头为注释），或 `index.json` 的 `{"items":[{"href":...}]}`
 - 目录名：`douyin-<awemeId>` / `bilibili-BV<id>` / `youtube-<id>`；认不出平台时 `other-<sha1(url)[:10]>`
 - 已有 `ok: true` 的 `result.json` 且没给 `--force` → 跳过
-- 串行；单项失败不中断，最后写 `batch.json`（原子替换），有失败则退出码 5
+- 默认串行；`--jobs N` 每条一个子进程并行（CUDA context 是进程级的，所以不下线程池）；
+  `--devices cuda:0,cuda:1` 给并行进程分卡，串行时也认第一个
+- 单项失败不中断，最后写 `batch.json`（原子替换）；`counts` 从 `items` 重算，
+  含 `pending` / `interrupted`，有失败则退出码 5
+- 并行子进程的日志在 `<out>/.logs/<序号>-<目录名>.log`：成功即删，失败保留并在条目的
+  `error` 里给出路径；失败的目标目录由子进程自己建，不会留空壳
 - 中途 Ctrl-C 或 kill：已完成的目录不会重转（复用条件见 README「已知限制」）
 
 ## 5. 失败分诊

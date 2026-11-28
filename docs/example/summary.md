@@ -4,31 +4,31 @@
 > 每条要点都回查过原文；摘要是草稿，结论以 transcript.md 为准。
 
 ## 概览
-- Cloud的Fibre 5.2花了209美元 [00:08]
+- Cloud的Fibre 5.2花了209美元 [00:09]
 - 第三方的人工盲评,做交互3D,Astra排全球第一 [01:30]
 - 10个一个多月,GPD终于发新模型了 [00:00]
 
 ## 关键数字
 - GPD 602 Astra只花了不到10美元 [00:11]
-- 新出的Sau 2美元 [00:13]
+- 新出的Sau 2美元 [00:14]
 - 两个都是105万token的上下文 [00:48]
 - Astra每百万token输入8美元, [00:50]
-- Solo是2美元和10美元, [00:54]
+- Solo是2美元和10美元, [00:55]
 - 让Astra设计一个能3D打印的摆中 [01:01]
 
 ## 关键词
 - Astra ×17
-- Fable ×4
+- Fable ×7
 - Solo ×4
-- fable ×3
 - Sore ×3
 - Agent ×2
 - Analysis ×2
 - Artificial ×2
+- GPD ×2
 
 ## 存疑段
 - [00:00] 10个一个多月,GPD终于发新模型了。（avg_logprob -0.21）
-- [00:02] 我们今天就来看看到底是行事啦。（avg_logprob -0.21）
+- [00:03] 我们今天就来看看到底是行事啦。（avg_logprob -0.21）
 - [00:05] 同一个提示时,让4个模型各做一个3D飞机场景。（avg_logprob -0.21）
-- [00:08] Cloud的Fibre 5.2花了209美元。（avg_logprob -0.21）
+- [00:09] Cloud的Fibre 5.2花了209美元。（avg_logprob -0.21）
 - [00:11] GPD 602 Astra只花了不到10美元。（avg_logprob -0.21）
